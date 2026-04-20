@@ -3,10 +3,10 @@ import { motion } from "framer-motion";
 import { Scan, BarChart3, Brain, Zap } from "lucide-react";
 
 const features = [
-  { icon: Scan, key: "Disease Detection", desc: "Identify crop diseases from a single image using deep learning models." },
-  { icon: BarChart3, key: "Severity Estimation", desc: "Get precise severity percentages to prioritize treatment actions." },
-  { icon: Brain, key: "Explainable AI", desc: "Visualize AI attention heatmaps to understand detection reasoning." },
-  { icon: Zap, key: "Real-time Analysis", desc: "Instant results powered by optimized inference pipelines." },
+  { icon: Scan, titleKey: "features.detection", descKey: "features.detection_desc" },
+  { icon: BarChart3, titleKey: "features.estimation", descKey: "features.estimation_desc" },
+  { icon: Brain, titleKey: "features.explainable", descKey: "features.explainable_desc" },
+  { icon: Zap, titleKey: "features.realtime", descKey: "features.realtime_desc" },
 ];
 
 const FeaturesSection = () => {
@@ -21,7 +21,7 @@ const FeaturesSection = () => {
         <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6 max-w-6xl mx-auto">
           {features.map((f, i) => (
             <motion.div
-              key={f.key}
+              key={f.titleKey}
               initial={{ opacity: 0, y: 30 }}
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
@@ -31,8 +31,8 @@ const FeaturesSection = () => {
               <div className="p-3 rounded-lg bg-primary/10 w-fit mb-4 group-hover:bg-primary/20 transition">
                 <f.icon className="h-6 w-6 text-primary" />
               </div>
-              <h3 className="font-display font-semibold text-lg mb-2">{f.key}</h3>
-              <p className="text-sm text-muted-foreground">{f.desc}</p>
+              <h3 className="font-display font-semibold text-lg mb-2">{t(f.titleKey)}</h3>
+              <p className="text-sm text-muted-foreground">{t(f.descKey)}</p>
             </motion.div>
           ))}
         </div>

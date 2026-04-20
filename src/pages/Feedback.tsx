@@ -26,7 +26,7 @@ const Feedback = () => {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    toast.success("Thank you for your feedback!");
+    toast.success(t("feedback.success"));
     setName("");
     setEmail("");
     setMessage("");

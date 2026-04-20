@@ -1,0 +1,16 @@
+fastapi
+uvicorn
+supabase
+python-multipart
+python-jose[cryptography]
+passlib[bcrypt]
+python-dotenv
+pydantic[email]
+opencv-python-headless
+numpy
+google-generativeai
+Pillow
+torch
+torchvision
+anthropic
+requests

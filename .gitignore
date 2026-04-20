@@ -22,3 +22,57 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+backend/venv/
+backend/venv312/
+backend/.env
+*.pth
+*.pth.tar
+*.pkl
+*.pickle
+
+# Environment variables (SENSITIVE)
+.env
+.env.local
+.env.*.local
+*.env
+
+# API Keys and Secrets (SENSITIVE)
+*_API_KEY*
+*_SECRET*
+*_TOKEN*
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Testing
+coverage/
+.nyc_output/
+.pytest_cache/
+
+# Build
+build/
+dist/
+*.egg-info/
+
+# Kiro
+.kiro/

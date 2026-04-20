@@ -1,32 +1,37 @@
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
-import { useTheme } from "@/contexts/ThemeContext";
-import { useI18n } from "@/contexts/I18nContext";
-import { Sun, Moon, LogOut, Menu, X, Leaf } from "lucide-react";
-import { useState } from "react";
+import { useI18n, LANGUAGES } from "@/contexts/I18nContext";
+import { LogOut, Menu, X, Leaf, ChevronDown, Globe } from "lucide-react";
+import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 
 const Navbar = () => {
   const { isAuthenticated, logout } = useAuth();
-  const { theme, toggleTheme } = useTheme();
   const { lang, setLang, t } = useI18n();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
+  const [langOpen, setLangOpen] = useState(false);
+  const langRef = useRef<HTMLDivElement>(null);
 
-  const handleLogout = () => {
-    logout();
-    navigate("/");
-    setOpen(false);
-  };
+  const handleLogout = () => { logout(); navigate("/"); setOpen(false); };
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (langRef.current && !langRef.current.contains(e.target as Node)) setLangOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const currentLang = LANGUAGES.find(l => l.code === lang);
 
   const navLinks = [
     { to: "/", label: t("nav.home") },
-    ...(isAuthenticated
-      ? [
-          { to: "/profile", label: t("nav.profile") },
-          { to: "/feedback", label: t("nav.feedback") },
-        ]
-      : []),
+    ...(isAuthenticated ? [
+      { to: "/profile",  label: t("nav.profile")  },
+      { to: "/feedback", label: t("nav.feedback") },
+    ] : []),
   ];
 
   return (
@@ -45,16 +50,32 @@ const Navbar = () => {
             </Link>
           ))}
 
-          <button
-            onClick={() => setLang(lang === "en" ? "hi" : "en")}
-            className="text-xs font-medium px-2 py-1 rounded-md bg-secondary text-secondary-foreground hover:bg-secondary/80 transition"
-          >
-            {lang === "en" ? "हिंदी" : "EN"}
-          </button>
+          {/* Language dropdown */}
+          <div className="relative" ref={langRef}>
+            <button
+              onClick={() => setLangOpen(!langOpen)}
+              className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-md bg-secondary text-secondary-foreground hover:bg-secondary/80 transition"
+            >
+              <Globe className="h-3.5 w-3.5" />
+              {currentLang?.native}
+              <ChevronDown className={`h-3 w-3 transition-transform ${langOpen ? "rotate-180" : ""}`} />
+            </button>
 
-          <button onClick={toggleTheme} className="p-2 rounded-md hover:bg-secondary transition">
-            {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-          </button>
+            {langOpen && (
+              <div className="absolute right-0 mt-2 w-44 bg-background border border-border rounded-lg shadow-lg overflow-hidden z-50">
+                {LANGUAGES.map(l => (
+                  <button
+                    key={l.code}
+                    onClick={() => { setLang(l.code); setLangOpen(false); }}
+                    className={`w-full text-left px-4 py-2 text-sm flex items-center justify-between hover:bg-secondary transition ${lang === l.code ? "bg-primary/10 text-primary font-medium" : "text-foreground"}`}
+                  >
+                    <span>{l.native}</span>
+                    <span className="text-xs text-muted-foreground">{l.label}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
 
           {isAuthenticated ? (
             <Button variant="ghost" size="sm" onClick={handleLogout}>
@@ -84,14 +105,23 @@ const Navbar = () => {
               {l.label}
             </Link>
           ))}
-          <div className="flex items-center gap-3 pt-2">
-            <button onClick={() => setLang(lang === "en" ? "hi" : "en")} className="text-xs px-2 py-1 rounded-md bg-secondary text-secondary-foreground">
-              {lang === "en" ? "हिंदी" : "EN"}
-            </button>
-            <button onClick={toggleTheme} className="p-2 rounded-md hover:bg-secondary">
-              {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-            </button>
+
+          {/* Mobile language list */}
+          <div className="pt-2">
+            <p className="text-xs text-muted-foreground mb-2 flex items-center gap-1"><Globe className="h-3 w-3" /> {t("nav.language")}</p>
+            <div className="grid grid-cols-2 gap-1">
+              {LANGUAGES.map(l => (
+                <button
+                  key={l.code}
+                  onClick={() => setLang(l.code)}
+                  className={`text-left px-3 py-1.5 rounded-md text-xs transition ${lang === l.code ? "bg-primary/10 text-primary font-medium" : "bg-secondary text-secondary-foreground hover:bg-secondary/80"}`}
+                >
+                  {l.native}
+                </button>
+              ))}
+            </div>
           </div>
+
           {isAuthenticated ? (
             <button onClick={handleLogout} className="text-sm text-destructive">{t("nav.logout")}</button>
           ) : (
