@@ -4,22 +4,42 @@ import { useI18n } from "@/contexts/I18nContext";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
+import { DiseaseInfoPanel } from "@/components/DiseaseInfoPanel";
 import { motion, AnimatePresence } from "framer-motion";
-import { AlertTriangle, CheckCircle, ArrowLeft, MessageSquare, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
+import { 
+  AlertTriangle, 
+  CheckCircle, 
+  ArrowLeft, 
+  MessageSquare, 
+  Loader2,
+  ImageIcon,
+  Activity,
+  Lightbulb,
+  ShieldAlert,
+  BarChart3,
+  FileText,
+  RefreshCcw,
+  Info
+} from "lucide-react";
 
 interface AnalysisItem {
   preview: string;
   filename: string;
   crop: string;
   disease: string;
+  disease_key?: string;
   severity: number;
   confidence: number;
   status: string;
   heatmap: string;
   explanation: string;
   treatment: string;
+  precautions?: string;
 }
 
 // Deterministic mock — same image bytes → same hash → same result (frontend fallback)
@@ -52,7 +72,7 @@ async function analyzeImage(preview: string, filename: string, t: (key: string) 
       
       console.log("[FarmLens] Sending request to backend with language:", language);
       
-      const res = await fetch("http://localhost:8001/analyze", {
+      const res = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:8001'}/analyze`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
         body: form,
@@ -68,12 +88,16 @@ async function analyzeImage(preview: string, filename: string, t: (key: string) 
           filename,
           crop: d.crop || "Unknown",
           disease: d.disease,
+          disease_key: d.disease_key || "",
           severity: d.severity,
           confidence: d.confidence,
           status: d.status,
-          heatmap: d.heatmap_b64 || "",
+          heatmap: d.heatmap_b64
+            ? `data:image/jpeg;base64,${d.heatmap_b64}`
+            : "",
           explanation: d.explanation || "",
           treatment: d.treatment || "",
+          precautions: d.precautions || "",
         };
       }
       // Log backend errors for debugging
@@ -95,6 +119,7 @@ async function analyzeImage(preview: string, filename: string, t: (key: string) 
     filename,
     crop: m.crop,
     disease: m.disease,
+    disease_key: "",
     severity: m.severity,
     confidence: m.confidence,
     status: m.disease === "Healthy" ? t("result.healthy") : t("result.infected"),
@@ -231,251 +256,467 @@ const Result = () => {
 
   if (!items.length) return null;
   
-  // Get current crop group with safety checks
-  const cropGroups = Object.keys(groupedItems);
-  const currentGroup = groupedItems[currentCrop] || [];
+  const item = items[0]; // For now, show first item (can be enhanced for multiple images)
+  const isHealthy = item.status === "Healthy" || item.disease.toLowerCase() === "healthy";
   
-  // Fallback if current group is empty (shouldn't happen but safety first)
-  if (currentGroup.length === 0 && items.length > 0) {
-    const fallbackCrop = cropGroups[0] || "Unknown";
-    const fallbackGroup = groupedItems[fallbackCrop] || items;
-    const item = fallbackGroup[0] || items[0];
-    const isHealthy = item.status === "Healthy";
-    const total = fallbackGroup.length;
-    
-    return (
-      <div className="min-h-screen flex flex-col">
-        <Navbar />
-        <main className="flex-1 flex items-center justify-center">
-          <div className="text-center space-y-3">
-            <p className="text-muted-foreground">{t("result.loading")}</p>
-          </div>
-        </main>
-        <Footer />
-      </div>
-    );
-  }
+  // Determine severity level and color
+  const getSeverityLevel = (severity: number) => {
+    if (severity === 0) return { label: t("result.healthy"), color: "text-green-600", bgColor: "bg-green-100" };
+    if (severity < 40) return { label: t("result.mild"), color: "text-yellow-600", bgColor: "bg-yellow-100" };
+    if (severity < 70) return { label: t("result.moderate"), color: "text-orange-600", bgColor: "bg-orange-100" };
+    return { label: t("result.severe"), color: "text-red-600", bgColor: "bg-red-100" };
+  };
   
-  const item = currentGroup[currentIndex] || currentGroup[0];
-  const isHealthy = item.status === "Healthy";
-  const total = currentGroup.length;
+  const severityInfo = getSeverityLevel(item.severity);
   
-  // Calculate aggregated stats for current crop
-  const avgSeverity = currentGroup.length > 0 
-    ? Math.round(currentGroup.reduce((sum, i) => sum + i.severity, 0) / currentGroup.length)
-    : 0;
-  const avgConfidence = currentGroup.length > 0
-    ? Math.round(currentGroup.reduce((sum, i) => sum + i.confidence, 0) / currentGroup.length)
-    : 0;
-  const diseaseCount = currentGroup.filter(i => i.status !== "Healthy").length;
-  const healthyCount = currentGroup.filter(i => i.status === "Healthy").length;
+  // Get confidence level
+  const getConfidenceLevel = (confidence: number) => {
+    if (confidence >= 90) return { label: t("result.very_high"), color: "text-green-600" };
+    if (confidence >= 80) return { label: t("result.high"), color: "text-blue-600" };
+    if (confidence >= 70) return { label: t("result.moderate"), color: "text-yellow-600" };
+    return { label: t("result.low"), color: "text-orange-600" };
+  };
+  
+  const confidenceInfo = getConfidenceLevel(item.confidence);
+
 
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="min-h-screen flex flex-col bg-gradient-to-br from-background via-background to-primary/5">
       <Navbar />
-      <main className="flex-1 pt-24 pb-16">
-        <div className="container mx-auto px-4 max-w-4xl">
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
-
-            <div className="flex items-center justify-between">
-              <h1 className="text-3xl font-display font-bold">{t("result.disease")}</h1>
-              {total > 1 && <span className="text-sm text-muted-foreground">{currentIndex + 1} / {total}</span>}
+      <main className="flex-1 pt-20 pb-16">
+        <div className="container mx-auto px-4 max-w-7xl">
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }} 
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5 }}
+            className="space-y-6"
+          >
+            
+            {/* Header Section */}
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+              <div>
+                <h1 className="text-3xl md:text-4xl font-display font-bold bg-gradient-to-r from-primary to-primary/70 bg-clip-text text-transparent">
+                  {t("result.disease")}
+                </h1>
+                <p className="text-muted-foreground mt-1">
+                  AI-Powered Plant Disease Analysis
+                </p>
+              </div>
+              
+              {/* Quick Actions */}
+              <div className="flex gap-3">
+                <Button 
+                  onClick={() => { 
+                    sessionStorage.clear();
+                    navigate("/", { state: { scrollToUpload: true } }); 
+                  }}
+                  className="bg-primary text-primary-foreground hover:bg-primary/90"
+                >
+                  <RefreshCcw className="h-4 w-4 mr-2" />
+                  {t("result.another")}
+                </Button>
+                <Button 
+                  variant="outline" 
+                  onClick={() => navigate("/feedback")}
+                >
+                  <MessageSquare className="h-4 w-4 mr-2" />
+                  {t("result.feedback")}
+                </Button>
+              </div>
             </div>
 
-            {/* Crop Group Selector - only show if multiple crops detected */}
-            {cropGroups.length > 1 && (
-              <div className="glass rounded-lg p-4 space-y-3">
-                <p className="text-sm font-semibold text-muted-foreground">{t("result.detected_crops")} ({items.length} {t("result.images")})</p>
-                <div className="flex flex-wrap gap-2">
-                  {cropGroups.map(crop => {
-                    const count = groupedItems[crop].length;
-                    const isActive = crop === currentCrop;
-                    return (
-                      <button
-                        key={crop}
-                        onClick={() => {
-                          setCurrentCrop(crop);
-                          setCurrentIndex(0); // Reset to first image in new crop group
-                        }}
-                        className={`px-4 py-2 rounded-lg text-sm font-medium transition ${
-                          isActive 
-                            ? "bg-primary text-primary-foreground" 
-                            : "bg-muted hover:bg-muted/80"
-                        }`}
-                      >
-                        {crop} ({count})
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
+            {/* Status Banner */}
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              transition={{ delay: 0.2 }}
+            >
+              <Card className={`border-2 ${isHealthy ? 'border-green-500 bg-green-50/50 dark:bg-green-950/20' : 'border-orange-500 bg-orange-50/50 dark:bg-orange-950/20'}`}>
+                <CardContent className="pt-6">
+                  <div className="flex items-center gap-4">
+                    {isHealthy ? (
+                      <div className="p-3 rounded-full bg-green-500/20">
+                        <CheckCircle className="h-8 w-8 text-green-600" />
+                      </div>
+                    ) : (
+                      <div className="p-3 rounded-full bg-orange-500/20">
+                        <AlertTriangle className="h-8 w-8 text-orange-600" />
+                      </div>
+                    )}
+                    <div className="flex-1">
+                      <h2 className="text-2xl font-bold">
+                        {isHealthy ? "Healthy Plant Detected" : "Disease Detected"}
+                      </h2>
+                      <p className="text-muted-foreground">
+                        {isHealthy 
+                          ? "Your plant appears to be in good health"
+                          : "Immediate attention recommended"
+                        }
+                      </p>
+                    </div>
+                    <Badge 
+                      variant={isHealthy ? "default" : "destructive"}
+                      className="text-lg px-4 py-2"
+                    >
+                      {isHealthy ? t("result.healthy") : t("result.infected")}
+                    </Badge>
+                  </div>
+                </CardContent>
+              </Card>
+            </motion.div>
 
-            {/* Aggregated Stats for Current Crop - only show if multiple images in group */}
-            {currentGroup.length > 1 && (
-              <div className="glass rounded-lg p-4 grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div className="text-center">
-                  <p className="text-2xl font-bold text-primary">{currentGroup.length}</p>
-                  <p className="text-xs text-muted-foreground">{t("result.total_images")}</p>
-                </div>
-                <div className="text-center">
-                  <p className="text-2xl font-bold text-green-600">{healthyCount}</p>
-                  <p className="text-xs text-muted-foreground">{t("result.healthy")}</p>
-                </div>
-                <div className="text-center">
-                  <p className="text-2xl font-bold text-destructive">{diseaseCount}</p>
-                  <p className="text-xs text-muted-foreground">{t("result.infected")}</p>
-                </div>
-                <div className="text-center">
-                  <p className="text-2xl font-bold">{avgSeverity}%</p>
-                  <p className="text-xs text-muted-foreground">{t("result.avg_severity")}</p>
-                </div>
-              </div>
-            )}
-
-            {/* Thumbnail strip for current crop group */}
-            {total > 1 && (
-              <div className="flex gap-2 overflow-x-auto pb-1">
-                {currentGroup.map((img, i) => (
-                  <button key={i} onClick={() => setCurrentIndex(i)}
-                    className={`shrink-0 w-16 h-16 rounded-lg overflow-hidden border-2 transition ${i === currentIndex ? "border-primary" : "border-transparent opacity-60 hover:opacity-100"}`}>
-                    <img src={img.preview} alt={img.filename} className="w-full h-full object-cover" />
-                  </button>
-                ))}
-              </div>
-            )}
-
-            <AnimatePresence mode="wait">
-              <motion.div key={`${currentCrop}-${currentIndex}`} initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} transition={{ duration: 0.2 }} className="grid md:grid-cols-2 gap-8">
-
-                {/* Images side-by-side */}
-                <div className="space-y-3">
-                  {item.heatmap ? (
-                    <>
-                      <div className="grid grid-cols-2 gap-3">
-                        {/* Original */}
-                        <div className="space-y-1">
-                          <div className="relative rounded-xl overflow-hidden glass">
-                            <img src={item.preview} alt="Original" className="w-full h-64 object-cover" />
-                            <div className="absolute bottom-2 left-2 bg-black/60 text-white text-[10px] px-2 py-0.5 rounded">
+            {/* Main Content Grid */}
+            <div className="grid lg:grid-cols-2 gap-6">
+              
+              {/* Left Column: Images */}
+              <motion.div
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: 0.3 }}
+                className="space-y-6"
+              >
+                {/* Original Image and Heatmap Side by Side */}
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <ImageIcon className="h-5 w-5 text-primary" />
+                      Visual Analysis
+                    </CardTitle>
+                    <CardDescription>
+                      Original image and disease heatmap comparison
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      {/* Original Image */}
+                      <div className="space-y-2">
+                        <div className="relative rounded-lg overflow-hidden border-2 border-border group">
+                          <img 
+                            src={item.preview} 
+                            alt="Original Plant" 
+                            className="w-full aspect-square object-cover transition-transform group-hover:scale-105"
+                          />
+                          <div className="absolute top-2 left-2">
+                            <Badge variant="secondary" className="bg-black/60 text-white border-none">
                               📷 {t("result.original")}
+                            </Badge>
+                          </div>
+                        </div>
+                        <p className="text-xs text-center text-muted-foreground font-medium">
+                          Uploaded Image
+                        </p>
+                      </div>
+
+                      {/* Heatmap Image */}
+                      <div className="space-y-2">
+                        {item.heatmap ? (
+                          <>
+                            <div className="relative rounded-lg overflow-hidden border-2 border-primary/50 group">
+                              <img 
+                                src={item.heatmap} 
+                                alt="Disease Heatmap" 
+                                className="w-full aspect-square object-cover transition-transform group-hover:scale-105"
+                              />
+                              <div className="absolute top-2 left-2">
+                                <Badge className="bg-primary/90 text-primary-foreground border-none">
+                                  🔥 Grad-CAM
+                                </Badge>
+                              </div>
+                            </div>
+                            <p className="text-xs text-center text-muted-foreground font-medium">
+                              Disease Regions
+                            </p>
+                          </>
+                        ) : (
+                          <div className="rounded-lg border-2 border-dashed border-border bg-muted aspect-square flex items-center justify-center">
+                            <div className="text-center p-4">
+                              <Activity className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
+                              <p className="text-sm text-muted-foreground">
+                                {isHealthy ? "No heatmap for healthy plants" : "Heatmap not available"}
+                              </p>
                             </div>
                           </div>
-                          <p className="text-xs text-center text-muted-foreground">{t("result.original")}</p>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Heatmap Legend */}
+                    {item.heatmap && !isHealthy && (
+                      <div className="bg-muted/50 rounded-lg p-4 space-y-3">
+                        <div className="flex items-center gap-2 mb-2">
+                          <Info className="h-4 w-4 text-primary" />
+                          <p className="text-sm font-semibold">Heatmap Legend</p>
                         </div>
-                        {/* Heatmap */}
-                        <div className="space-y-1">
-                          <div className="relative rounded-xl overflow-hidden glass">
-                            <img src={item.heatmap} alt="Heatmap" className="w-full h-64 object-cover" />
-                            <div className="absolute bottom-2 left-2 bg-black/60 text-white text-[10px] px-2 py-0.5 rounded">
-                              🌡 {t("result.heatmap")}
-                            </div>
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-3">
+                            <div className="w-12 h-4 rounded" style={{ background: 'linear-gradient(to right, #0000ff, #00ffff)' }}></div>
+                            <span className="text-xs text-muted-foreground flex-1">Healthy Area</span>
                           </div>
-                          <p className="text-xs text-center text-muted-foreground">{t("result.infected_regions")}</p>
+                          <div className="flex items-center gap-3">
+                            <div className="w-12 h-4 rounded" style={{ background: 'linear-gradient(to right, #00ff00, #ffff00)' }}></div>
+                            <span className="text-xs text-muted-foreground flex-1">Mild Infection</span>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <div className="w-12 h-4 rounded" style={{ background: 'linear-gradient(to right, #ff8800, #ff0000)' }}></div>
+                            <span className="text-xs text-muted-foreground flex-1">Severe Infection</span>
+                          </div>
                         </div>
+                        <Separator />
+                        <p className="text-xs text-muted-foreground italic text-center">
+                          Warmer colors indicate higher disease severity
+                        </p>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+
+                {/* Explainability Card */}
+                {item.explanation && (
+                  <Card className="bg-gradient-to-br from-blue-50/50 to-purple-50/50 dark:from-blue-950/20 dark:to-purple-950/20">
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2 text-lg">
+                        <Lightbulb className="h-5 w-5 text-blue-600" />
+                        Explainability
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <p className="text-sm leading-relaxed text-foreground/90">
+                        {item.explanation}
+                      </p>
+                    </CardContent>
+                  </Card>
+                )}
+              </motion.div>
+
+              {/* Right Column: Analysis Details */}
+              <motion.div
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: 0.3 }}
+                className="space-y-6"
+              >
+                
+                {/* Detection Results Card */}
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <BarChart3 className="h-5 w-5 text-primary" />
+                      Detection Results
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-6">
+                    
+                    {/* Crop Name */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
+                          Crop Name
+                        </label>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <div className="flex-1">
+                          <p className="text-2xl font-bold">{translateCrop(item.crop)}</p>
+                        </div>
+                        <Badge variant="outline" className="text-sm">
+                          🌱 Crop
+                        </Badge>
+                      </div>
+                    </div>
+
+                    <Separator />
+
+                    {/* Disease Name */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
+                          Disease Name
+                        </label>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <div className="flex-1">
+                          <p className="text-2xl font-bold">{translateDisease(item.disease)}</p>
+                        </div>
+                        <Badge 
+                          variant={isHealthy ? "default" : "destructive"}
+                          className="text-sm"
+                        >
+                          {isHealthy ? "✓" : "⚠"} {isHealthy ? t("result.healthy") : t("result.infected")}
+                        </Badge>
+                      </div>
+                    </div>
+
+                    <Separator />
+
+                    {/* Severity */}
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <label className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
+                          Severity Level
+                        </label>
+                        <Badge className={`${severityInfo.bgColor} ${severityInfo.color} border-none`}>
+                          {severityInfo.label}
+                        </Badge>
+                      </div>
+                      <div className="space-y-2">
+                        <Progress value={item.severity} className="h-3" />
+                        <div className="flex justify-between items-center">
+                          <span className="text-xs text-muted-foreground">0%</span>
+                          <span className={`text-2xl font-bold ${severityInfo.color}`}>
+                            {item.severity}%
+                          </span>
+                          <span className="text-xs text-muted-foreground">100%</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <Separator />
+
+                    {/* Confidence */}
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <label className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
+                          AI Confidence
+                        </label>
+                        <Badge variant="outline" className={confidenceInfo.color}>
+                          {confidenceInfo.label}
+                        </Badge>
+                      </div>
+                      <div className="space-y-2">
+                        <Progress value={item.confidence} className="h-3 bg-blue-100" />
+                        <div className="flex justify-between items-center">
+                          <span className="text-xs text-muted-foreground">50%</span>
+                          <span className={`text-2xl font-bold ${confidenceInfo.color}`}>
+                            {item.confidence}%
+                          </span>
+                          <span className="text-xs text-muted-foreground">100%</span>
+                        </div>
+                      </div>
+                      <p className="text-xs text-muted-foreground italic">
+                        Model certainty in the prediction
+                      </p>
+                    </div>
+
+                  </CardContent>
+                </Card>
+
+                {/* Disease Information Panel - Fetched from Database */}
+                <DiseaseInfoPanel
+                  diseaseKey={item.disease_key}
+                  diseaseName={item.disease}
+                  cropName={item.crop}
+                  severity={item.severity}
+                  isHealthy={isHealthy}
+                />
+
+                {/* Treatment Card */}
+                {item.treatment && !isHealthy && (
+                  <Card className="bg-gradient-to-br from-green-50/50 to-emerald-50/50 dark:from-green-950/20 dark:to-emerald-950/20 border-green-200 dark:border-green-800">
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2 text-green-700 dark:text-green-400">
+                        <FileText className="h-5 w-5" />
+                        Personalized Treatment
+                      </CardTitle>
+                      <CardDescription>
+                        Recommended actions to address the detected disease
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="bg-white/50 dark:bg-gray-900/50 rounded-lg p-4 border border-green-200/50 dark:border-green-800/50">
+                        <p className="text-sm leading-relaxed text-foreground">
+                          {item.treatment}
+                        </p>
                       </div>
                       
-                      {/* Heatmap Legend */}
-                      <div className="glass rounded-lg p-3 space-y-2">
-                        <p className="text-xs font-semibold text-center mb-2">{t("result.heatmap_guide")}</p>
-                        <div className="space-y-1.5">
-                          <div className="flex items-center gap-2">
-                            <div className="w-6 h-4 rounded" style={{ background: 'linear-gradient(to right, #0000ff, #00ffff)' }}></div>
-                            <span className="text-xs text-muted-foreground flex-1">{t("result.healthy_low")}</span>
+                      {item.precautions && (
+                        <>
+                          <Separator />
+                          <div className="space-y-3">
+                            <div className="flex items-center gap-2">
+                              <ShieldAlert className="h-4 w-4 text-orange-600" />
+                              <h4 className="text-sm font-semibold text-orange-700 dark:text-orange-400">
+                                Precautions
+                              </h4>
+                            </div>
+                            <div className="bg-orange-50/50 dark:bg-orange-950/20 rounded-lg p-3 border border-orange-200/50 dark:border-orange-800/50">
+                              <p className="text-xs leading-relaxed text-foreground/90">
+                                {item.precautions}
+                              </p>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-2">
-                            <div className="w-6 h-4 rounded" style={{ background: 'linear-gradient(to right, #00ff00, #ffff00)' }}></div>
-                            <span className="text-xs text-muted-foreground flex-1">{t("result.mild_infection")}</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <div className="w-6 h-4 rounded" style={{ background: 'linear-gradient(to right, #ff8800, #ff0000)' }}></div>
-                            <span className="text-xs text-muted-foreground flex-1">{t("result.severe_infection")}</span>
-                          </div>
-                        </div>
-                        <div className="pt-2 border-t border-border">
-                          <p className="text-[10px] text-muted-foreground text-center italic">
-                            {t("result.warmer_colors")}
-                          </p>
-                        </div>
-                      </div>
-                    </>
-                  ) : (
-                    <div className="relative rounded-xl overflow-hidden glass">
-                      <img src={item.preview} alt="Original" className="w-full h-64 object-cover" />
-                      {!isHealthy && (
-                        <div className="absolute inset-0 bg-gradient-to-br from-destructive/20 via-transparent to-primary/20 mix-blend-multiply" />
+                        </>
                       )}
-                    </div>
-                  )}
-                  <p className="text-xs text-muted-foreground text-center italic">{item.explanation}</p>
-                  {total > 1 && (
-                    <div className="flex justify-between">
-                      <Button variant="outline" size="sm" disabled={currentIndex === 0} onClick={() => setCurrentIndex(c => c - 1)}>
-                        <ChevronLeft className="h-4 w-4 mr-1" /> {t("result.prev")}
-                      </Button>
-                      <Button variant="outline" size="sm" disabled={currentIndex === total - 1} onClick={() => setCurrentIndex(c => c + 1)}>
-                        {t("result.next")} <ChevronRight className="h-4 w-4 ml-1" />
-                      </Button>
-                    </div>
-                  )}
-                </div>
+                    </CardContent>
+                  </Card>
+                )}
 
-                {/* Result card */}
-                <div className="glass rounded-xl p-6 space-y-5">
-                  <div className="flex items-start gap-3">
-                    {isHealthy ? <CheckCircle className="h-8 w-8 text-primary mt-0.5 shrink-0" /> : <AlertTriangle className="h-8 w-8 text-destructive mt-0.5 shrink-0" />}
-                    <div>
-                      <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">{t("result.crop_label")}</p>
-                      <h2 className="text-xl font-display font-bold">{translateCrop(item.crop)}</h2>
-                      <p className="text-xs text-muted-foreground uppercase tracking-wide mt-2 mb-0.5">{t("result.disease_label")}</p>
-                      <p className="text-lg font-semibold">{translateDisease(item.disease)}</p>
-                      <span className={`inline-block mt-1 text-xs font-medium px-2 py-0.5 rounded-full ${isHealthy ? "bg-primary/10 text-primary" : "bg-destructive/10 text-destructive"}`}>
-                        {isHealthy ? t("result.healthy") : t("result.infected")}
-                      </span>
-                    </div>
-                  </div>
+                {/* Healthy Plant Care Card */}
+                {isHealthy && (
+                  <Card className="bg-gradient-to-br from-green-50/50 to-emerald-50/50 dark:from-green-950/20 dark:to-emerald-950/20 border-green-200 dark:border-green-800">
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2 text-green-700 dark:text-green-400">
+                        <CheckCircle className="h-5 w-5" />
+                        Maintenance Tips
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <p className="text-sm leading-relaxed">
+                        {item.treatment || "Continue regular watering and fertilization. Monitor plants weekly for early signs of disease or pest damage."}
+                      </p>
+                    </CardContent>
+                  </Card>
+                )}
 
-                  <div className="space-y-3">
-                    <div>
-                      <div className="flex justify-between text-sm mb-1">
-                        <span className="text-muted-foreground">{t("result.severity")}</span>
-                        <span className="font-semibold">{item.severity}%</span>
-                      </div>
-                      <Progress value={item.severity} className="h-2" />
+                {/* File Info */}
+                <Card className="bg-muted/30">
+                  <CardContent className="pt-6">
+                    <div className="flex items-center gap-3 text-sm text-muted-foreground">
+                      <ImageIcon className="h-4 w-4" />
+                      <span className="font-mono text-xs">{item.filename}</span>
                     </div>
-                    <div>
-                      <div className="flex justify-between text-sm mb-1">
-                        <span className="text-muted-foreground">{t("result.confidence")}</span>
-                        <span className="font-semibold">{item.confidence}%</span>
-                      </div>
-                      <Progress value={item.confidence} className="h-2" />
-                    </div>
-                  </div>
-
-                  {item.treatment && (
-                    <div className="border-t border-border pt-3">
-                      <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1.5">{t("result.treatment_prevention")}</p>
-                      <p className="text-sm leading-relaxed">{item.treatment}</p>
-                    </div>
-                  )}
-
-                  <p className="text-xs text-muted-foreground border-t border-border pt-3">{item.filename}</p>
-
-                  <div className="flex flex-col gap-3">
-                    <Button onClick={() => { 
-                      sessionStorage.clear(); // clear all cached data
-                      navigate("/", { state: { scrollToUpload: true } }); 
-                    }} className="bg-primary text-primary-foreground hover:bg-primary/90">
-                      <ArrowLeft className="h-4 w-4 mr-2" /> {t("result.another")}
-                    </Button>
-                    <Button variant="outline" onClick={() => navigate("/feedback")}>
-                      <MessageSquare className="h-4 w-4 mr-2" /> {t("result.feedback")}
-                    </Button>
-                  </div>
-                </div>
+                  </CardContent>
+                </Card>
 
               </motion.div>
-            </AnimatePresence>
+            </div>
+
+            {/* Bottom Action Buttons (Mobile Friendly) */}
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.5 }}
+              className="flex flex-col sm:flex-row gap-3 pt-4"
+            >
+              <Button 
+                onClick={() => { 
+                  sessionStorage.clear();
+                  navigate("/", { state: { scrollToUpload: true } }); 
+                }}
+                size="lg"
+                className="flex-1 bg-primary text-primary-foreground hover:bg-primary/90"
+              >
+                <RefreshCcw className="h-5 w-5 mr-2" />
+                {t("result.another")}
+              </Button>
+              <Button 
+                variant="outline"
+                size="lg"
+                onClick={() => navigate("/feedback")}
+                className="flex-1"
+              >
+                <MessageSquare className="h-5 w-5 mr-2" />
+                {t("result.feedback")}
+              </Button>
+              <Button 
+                variant="outline"
+                size="lg"
+                onClick={() => navigate("/")}
+                className="sm:w-auto"
+              >
+                <ArrowLeft className="h-5 w-5 mr-2" />
+                Home
+              </Button>
+            </motion.div>
+
           </motion.div>
         </div>
       </main>

@@ -144,7 +144,7 @@ const Chatbot: React.FC<ChatbotProps> = ({ triggerPopup = false }) => {
     setIsLoading(true);
 
     try {
-      const response = await fetch("http://localhost:8001/api/chatbot/chat", {
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:8001'}/api/chatbot/chat`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

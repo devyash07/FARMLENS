@@ -1,0 +1,1050 @@
+{
+  "Aphid": {
+    "crop": "General",
+    "disease": "Aphid Infestation",
+    "symptoms": [
+      "Curling leaves",
+      "Sticky honeydew",
+      "Yellowing foliage"
+    ],
+    "prevention": [
+      "Inspect plants regularly",
+      "Encourage ladybugs",
+      "Avoid excess nitrogen fertilizer"
+    ],
+    "treatment": [
+      "Spray neem oil",
+      "Use insecticidal soap",
+      "Apply recommended insecticide if severe"
+    ]
+  },
+
+  "Apple___Apple_scab": {
+    "crop": "Apple",
+    "disease": "Apple Scab",
+    "symptoms": [
+      "Dark olive spots on leaves",
+      "Scabby fruit lesions"
+    ],
+    "prevention": [
+      "Remove fallen leaves",
+      "Prune for airflow",
+      "Use resistant varieties"
+    ],
+    "treatment": [
+      "Apply Captan",
+      "Apply Mancozeb",
+      "Use Sulfur fungicide"
+    ]
+  },
+
+  "Apple___Black_rot": {
+    "crop": "Apple",
+    "disease": "Black Rot",
+    "symptoms": [
+      "Black fruit rot",
+      "Purple leaf spots",
+      "Cankers on branches"
+    ],
+    "prevention": [
+      "Remove infected fruit",
+      "Prune diseased branches",
+      "Maintain orchard sanitation"
+    ],
+    "treatment": [
+      "Apply Mancozeb",
+      "Copper fungicide",
+      "Captan spray"
+    ]
+  },
+
+  "Apple___Cedar_apple_rust": {
+    "crop": "Apple",
+    "disease": "Cedar Apple Rust",
+    "symptoms": [
+      "Orange leaf spots",
+      "Yellow lesions"
+    ],
+    "prevention": [
+      "Remove nearby cedar hosts",
+      "Improve airflow"
+    ],
+    "treatment": [
+      "Apply Myclobutanil",
+      "Use Mancozeb"
+    ]
+  },
+
+  "Apple___healthy": {
+    "crop": "Apple",
+    "disease": "Healthy",
+    "symptoms": [
+      "No disease symptoms"
+    ],
+    "prevention": [
+      "Regular irrigation",
+      "Balanced fertilization",
+      "Routine inspection"
+    ],
+    "treatment": [
+      "No treatment required"
+    ]
+  },
+
+  "Black Rust": {
+    "crop": "Wheat",
+    "disease": "Black Rust",
+    "symptoms": [
+      "Black pustules on stems",
+      "Weak plants"
+    ],
+    "prevention": [
+      "Grow resistant varieties",
+      "Field sanitation"
+    ],
+    "treatment": [
+      "Apply Triazole fungicide"
+    ]
+  },
+
+  "Blast": {
+    "crop": "Rice",
+    "disease": "Rice Blast",
+    "symptoms": [
+      "Diamond-shaped lesions",
+      "Leaf drying"
+    ],
+    "prevention": [
+      "Avoid excess nitrogen",
+      "Use certified seeds"
+    ],
+    "treatment": [
+      "Spray Tricyclazole",
+      "Use Isoprothiolane"
+    ]
+  },
+
+  "Blueberry___healthy": {
+    "crop": "Blueberry",
+    "disease": "Healthy",
+    "symptoms": [
+      "Healthy leaves"
+    ],
+    "prevention": [
+      "Proper irrigation",
+      "Regular monitoring"
+    ],
+    "treatment": [
+      "No treatment required"
+    ]
+  },
+
+  "Brown Rust": {
+    "crop": "Wheat",
+    "disease": "Brown Rust",
+    "symptoms": [
+      "Brown leaf pustules"
+    ],
+    "prevention": [
+      "Use resistant cultivars",
+      "Balanced fertilization"
+    ],
+    "treatment": [
+      "Apply Propiconazole"
+    ]
+  },
+
+  "Cherry_(including_sour)___Powdery_mildew": {
+    "crop": "Cherry",
+    "disease": "Powdery Mildew",
+    "symptoms": [
+      "White powder on leaves"
+    ],
+    "prevention": [
+      "Increase airflow",
+      "Avoid overhead watering"
+    ],
+    "treatment": [
+      "Sulfur spray",
+      "Potassium bicarbonate"
+    ]
+  },
+
+  "Cherry_(including_sour)___healthy": {
+    "crop": "Cherry",
+    "disease": "Healthy",
+    "symptoms": [
+      "Healthy foliage"
+    ],
+    "prevention": [
+      "Routine care"
+    ],
+    "treatment": [
+      "No treatment required"
+    ]
+  },
+
+  "Common Root Rot": {
+    "crop": "Wheat",
+    "disease": "Common Root Rot",
+    "symptoms": [
+      "Root discoloration",
+      "Poor growth"
+    ],
+    "prevention": [
+      "Crop rotation",
+      "Improve drainage"
+    ],
+    "treatment": [
+      "Seed treatment fungicides"
+    ]
+  },
+
+  "Corn_(maize)___Cercospora_leaf_spot Gray_leaf_spot": {
+    "crop": "Corn",
+    "disease": "Gray Leaf Spot",
+    "symptoms": [
+      "Rectangular gray lesions"
+    ],
+    "prevention": [
+      "Crop rotation",
+      "Remove crop residue"
+    ],
+    "treatment": [
+      "Azoxystrobin",
+      "Propiconazole"
+    ]
+  },
+
+  "Corn_(maize)___Common_rust_": {
+    "crop": "Corn",
+    "disease": "Common Rust",
+    "symptoms": [
+      "Rust-colored pustules"
+    ],
+    "prevention": [
+      "Plant resistant hybrids"
+    ],
+    "treatment": [
+      "Apply fungicide"
+    ]
+  },
+
+  "Corn_(maize)___Northern_Leaf_Blight": {
+    "crop": "Corn",
+    "disease": "Northern Leaf Blight",
+    "symptoms": [
+      "Long cigar-shaped lesions"
+    ],
+    "prevention": [
+      "Crop rotation",
+      "Field sanitation"
+    ],
+    "treatment": [
+      "Azoxystrobin",
+      "Pyraclostrobin"
+    ]
+  },
+
+  "Corn_(maize)___healthy": {
+    "crop": "Corn",
+    "disease": "Healthy",
+    "symptoms": [
+      "Healthy leaves"
+    ],
+    "prevention": [
+      "Balanced nutrients"
+    ],
+    "treatment": [
+      "No treatment required"
+    ]
+  },
+
+  "Cotton_Bacterial_Blight": {
+    "crop": "Cotton",
+    "disease": "Bacterial Blight",
+    "symptoms": [
+      "Angular leaf spots"
+    ],
+    "prevention": [
+      "Disease-free seed",
+      "Crop rotation"
+    ],
+    "treatment": [
+      "Copper bactericide"
+    ]
+  },
+
+  "Cotton_Curl_Virus": {
+    "crop": "Cotton",
+    "disease": "Cotton Leaf Curl Virus",
+    "symptoms": [
+      "Leaf curling",
+      "Vein thickening"
+    ],
+    "prevention": [
+      "Control whiteflies"
+    ],
+    "treatment": [
+      "No direct cure",
+      "Control insect vectors"
+    ]
+  },
+
+  "Cotton_Fusarium_Wilt": {
+    "crop": "Cotton",
+    "disease": "Fusarium Wilt",
+    "symptoms": [
+      "Wilting",
+      "Yellow leaves"
+    ],
+    "prevention": [
+      "Use resistant varieties"
+    ],
+    "treatment": [
+      "Improve soil health"
+    ]
+  },
+
+  "Cotton_Healthy": {
+    "crop": "Cotton",
+    "disease": "Healthy",
+    "symptoms": [
+      "Healthy leaves"
+    ],
+    "prevention": [
+      "Routine management"
+    ],
+    "treatment": [
+      "No treatment required"
+    ]
+  },
+
+  "Fusarium Head Blight": {
+    "crop": "Wheat",
+    "disease": "Fusarium Head Blight",
+    "symptoms": [
+      "Bleached spikelets"
+    ],
+    "prevention": [
+      "Crop rotation",
+      "Use certified seed"
+    ],
+    "treatment": [
+      "Tebuconazole"
+    ]
+  },
+
+  "Grape___Black_rot": {
+    "crop": "Grape",
+    "disease": "Black Rot",
+    "symptoms": [
+      "Brown circular lesions",
+      "Black fruit rot"
+    ],
+    "prevention": [
+      "Remove infected leaves",
+      "Prune vines",
+      "Improve air circulation",
+      "Avoid overhead irrigation"
+    ],
+    "treatment": [
+      "Mancozeb",
+      "Copper fungicide",
+      "Spray every 7–10 days"
+    ]
+  },
+    "Grape___Esca_(Black_Measles)": {
+    "crop": "Grape",
+    "disease": "Esca (Black Measles)",
+    "symptoms": [
+      "Brown streaks on leaves",
+      "Tiger-stripe pattern",
+      "Berry spotting"
+    ],
+    "prevention": [
+      "Prune infected branches",
+      "Disinfect pruning tools",
+      "Maintain vineyard hygiene"
+    ],
+    "treatment": [
+      "Remove severely infected vines",
+      "Apply wound protectants"
+    ]
+  },
+
+  "Grape___Leaf_blight_(Isariopsis_Leaf_Spot)": {
+    "crop": "Grape",
+    "disease": "Leaf Blight",
+    "symptoms": [
+      "Brown irregular leaf lesions",
+      "Leaf drying"
+    ],
+    "prevention": [
+      "Improve air circulation",
+      "Remove infected leaves"
+    ],
+    "treatment": [
+      "Copper fungicide",
+      "Mancozeb"
+    ]
+  },
+
+  "Grape___healthy": {
+    "crop": "Grape",
+    "disease": "Healthy",
+    "symptoms": [
+      "Healthy green foliage"
+    ],
+    "prevention": [
+      "Regular pruning",
+      "Balanced fertilization"
+    ],
+    "treatment": [
+      "No treatment required"
+    ]
+  },
+
+  "Leaf Blight": {
+    "crop": "Rice",
+    "disease": "Leaf Blight",
+    "symptoms": [
+      "Long water-soaked lesions",
+      "Yellowing leaves"
+    ],
+    "prevention": [
+      "Use disease-free seeds",
+      "Balanced fertilizer"
+    ],
+    "treatment": [
+      "Copper bactericide"
+    ]
+  },
+
+  "Mildew": {
+    "crop": "General",
+    "disease": "Powdery Mildew",
+    "symptoms": [
+      "White powdery fungal growth"
+    ],
+    "prevention": [
+      "Increase air circulation",
+      "Avoid excessive humidity"
+    ],
+    "treatment": [
+      "Sulfur fungicide",
+      "Potassium bicarbonate"
+    ]
+  },
+
+  "Mite": {
+    "crop": "General",
+    "disease": "Spider Mite Infestation",
+    "symptoms": [
+      "Tiny yellow spots",
+      "Webbing on leaves"
+    ],
+    "prevention": [
+      "Maintain humidity",
+      "Inspect plants regularly"
+    ],
+    "treatment": [
+      "Miticide",
+      "Neem oil"
+    ]
+  },
+
+  "Orange___Haunglongbing_(Citrus_greening)": {
+    "crop": "Orange",
+    "disease": "Citrus Greening (HLB)",
+    "symptoms": [
+      "Yellow shoots",
+      "Small bitter fruits"
+    ],
+    "prevention": [
+      "Control psyllids",
+      "Remove infected trees"
+    ],
+    "treatment": [
+      "No permanent cure",
+      "Control insect vectors"
+    ]
+  },
+
+  "Peach___Bacterial_spot": {
+    "crop": "Peach",
+    "disease": "Bacterial Spot",
+    "symptoms": [
+      "Dark leaf spots",
+      "Fruit lesions"
+    ],
+    "prevention": [
+      "Plant resistant varieties",
+      "Avoid overhead irrigation"
+    ],
+    "treatment": [
+      "Copper bactericide"
+    ]
+  },
+
+  "Peach___healthy": {
+    "crop": "Peach",
+    "disease": "Healthy",
+    "symptoms": [
+      "Healthy foliage"
+    ],
+    "prevention": [
+      "Routine monitoring"
+    ],
+    "treatment": [
+      "No treatment required"
+    ]
+  },
+
+  "Pepper,_bell___Bacterial_spot": {
+    "crop": "Bell Pepper",
+    "disease": "Bacterial Spot",
+    "symptoms": [
+      "Water-soaked leaf spots"
+    ],
+    "prevention": [
+      "Disease-free seed",
+      "Crop rotation"
+    ],
+    "treatment": [
+      "Copper bactericide"
+    ]
+  },
+
+  "Pepper,_bell___healthy": {
+    "crop": "Bell Pepper",
+    "disease": "Healthy",
+    "symptoms": [
+      "Healthy leaves"
+    ],
+    "prevention": [
+      "Routine crop care"
+    ],
+    "treatment": [
+      "No treatment required"
+    ]
+  },
+
+  "Pepper__bell___Bacterial_spot": {
+    "crop": "Bell Pepper",
+    "disease": "Bacterial Spot",
+    "symptoms": [
+      "Water-soaked leaf spots"
+    ],
+    "prevention": [
+      "Disease-free seed",
+      "Crop rotation"
+    ],
+    "treatment": [
+      "Copper bactericide"
+    ]
+  },
+
+  "Pepper__bell___healthy": {
+    "crop": "Bell Pepper",
+    "disease": "Healthy",
+    "symptoms": [
+      "Healthy leaves"
+    ],
+    "prevention": [
+      "Routine crop care"
+    ],
+    "treatment": [
+      "No treatment required"
+    ]
+  },
+
+  "Potato___Early_blight": {
+    "crop": "Potato",
+    "disease": "Early Blight",
+    "symptoms": [
+      "Target-like brown lesions"
+    ],
+    "prevention": [
+      "Crop rotation",
+      "Remove infected debris"
+    ],
+    "treatment": [
+      "Mancozeb",
+      "Chlorothalonil"
+    ]
+  },
+
+  "Potato___Late_blight": {
+    "crop": "Potato",
+    "disease": "Late Blight",
+    "symptoms": [
+      "Dark water-soaked lesions"
+    ],
+    "prevention": [
+      "Avoid excess moisture",
+      "Use certified seed"
+    ],
+    "treatment": [
+      "Metalaxyl",
+      "Copper fungicide"
+    ]
+  },
+
+  "Potato___healthy": {
+    "crop": "Potato",
+    "disease": "Healthy",
+    "symptoms": [
+      "Healthy foliage"
+    ],
+    "prevention": [
+      "Routine management"
+    ],
+    "treatment": [
+      "No treatment required"
+    ]
+  },
+
+  "Raspberry___healthy": {
+    "crop": "Raspberry",
+    "disease": "Healthy",
+    "symptoms": [
+      "Healthy foliage"
+    ],
+    "prevention": [
+      "Routine care"
+    ],
+    "treatment": [
+      "No treatment required"
+    ]
+  },
+
+  "Rice_Bacterial_Leaf_Blight": {
+    "crop": "Rice",
+    "disease": "Bacterial Leaf Blight",
+    "symptoms": [
+      "Yellow leaf margins",
+      "Leaf drying"
+    ],
+    "prevention": [
+      "Use certified seeds",
+      "Balanced nitrogen"
+    ],
+    "treatment": [
+      "Copper bactericide"
+    ]
+  },
+
+  "Rice_Brown_Spot": {
+    "crop": "Rice",
+    "disease": "Brown Spot",
+    "symptoms": [
+      "Brown circular spots"
+    ],
+    "prevention": [
+      "Balanced fertilization",
+      "Good drainage"
+    ],
+    "treatment": [
+      "Propiconazole"
+    ]
+  },
+
+  "Rice_Healthy": {
+    "crop": "Rice",
+    "disease": "Healthy",
+    "symptoms": [
+      "Healthy green leaves"
+    ],
+    "prevention": [
+      "Routine monitoring"
+    ],
+    "treatment": [
+      "No treatment required"
+    ]
+  },
+
+  "Rice_Leaf_Blast": {
+    "crop": "Rice",
+    "disease": "Leaf Blast",
+    "symptoms": [
+      "Diamond-shaped lesions"
+    ],
+    "prevention": [
+      "Avoid excess nitrogen",
+      "Use resistant varieties"
+    ],
+    "treatment": [
+      "Tricyclazole",
+      "Isoprothiolane"
+    ]
+  },
+
+  "Rice_Leaf_Scald": {
+    "crop": "Rice",
+    "disease": "Leaf Scald",
+    "symptoms": [
+      "Large gray lesions"
+    ],
+    "prevention": [
+      "Balanced fertilization",
+      "Field sanitation"
+    ],
+    "treatment": [
+      "Propiconazole"
+    ]
+  },
+    "Rice_Narrow_Brown_Spot": {
+    "crop": "Rice",
+    "disease": "Narrow Brown Spot",
+    "symptoms": [
+      "Narrow brown lesions",
+      "Leaf discoloration"
+    ],
+    "prevention": [
+      "Balanced fertilization",
+      "Field sanitation"
+    ],
+    "treatment": [
+      "Propiconazole"
+    ]
+  },
+
+  "Septoria": {
+    "crop": "Tomato",
+    "disease": "Septoria Leaf Spot",
+    "symptoms": [
+      "Small circular brown spots",
+      "Yellowing leaves"
+    ],
+    "prevention": [
+      "Remove infected leaves",
+      "Avoid overhead irrigation"
+    ],
+    "treatment": [
+      "Chlorothalonil",
+      "Copper fungicide"
+    ]
+  },
+
+  "Sheath Blight": {
+    "crop": "Rice",
+    "disease": "Sheath Blight",
+    "symptoms": [
+      "Oval lesions on leaf sheath",
+      "Drying leaves"
+    ],
+    "prevention": [
+      "Reduce plant density",
+      "Balanced nitrogen fertilizer"
+    ],
+    "treatment": [
+      "Validamycin",
+      "Propiconazole"
+    ]
+  },
+
+  "Smut": {
+    "crop": "Wheat",
+    "disease": "Smut",
+    "symptoms": [
+      "Black powdery spores",
+      "Damaged grains"
+    ],
+    "prevention": [
+      "Use certified seed",
+      "Seed treatment"
+    ],
+    "treatment": [
+      "Carboxin seed treatment"
+    ]
+  },
+
+  "Soybean___healthy": {
+    "crop": "Soybean",
+    "disease": "Healthy",
+    "symptoms": [
+      "Healthy foliage"
+    ],
+    "prevention": [
+      "Routine crop management"
+    ],
+    "treatment": [
+      "No treatment required"
+    ]
+  },
+
+  "Squash___Powdery_mildew": {
+    "crop": "Squash",
+    "disease": "Powdery Mildew",
+    "symptoms": [
+      "White powder on leaves"
+    ],
+    "prevention": [
+      "Increase air circulation",
+      "Avoid excess humidity"
+    ],
+    "treatment": [
+      "Sulfur fungicide",
+      "Potassium bicarbonate"
+    ]
+  },
+
+  "Stem fly": {
+    "crop": "Soybean",
+    "disease": "Stem Fly Infestation",
+    "symptoms": [
+      "Stem tunneling",
+      "Wilting seedlings"
+    ],
+    "prevention": [
+      "Early sowing",
+      "Field sanitation"
+    ],
+    "treatment": [
+      "Imidacloprid",
+      "Thiamethoxam"
+    ]
+  },
+
+  "Strawberry___Leaf_scorch": {
+    "crop": "Strawberry",
+    "disease": "Leaf Scorch",
+    "symptoms": [
+      "Purple leaf margins",
+      "Dry brown patches"
+    ],
+    "prevention": [
+      "Avoid overhead watering",
+      "Remove infected leaves"
+    ],
+    "treatment": [
+      "Copper fungicide"
+    ]
+  },
+
+  "Strawberry___healthy": {
+    "crop": "Strawberry",
+    "disease": "Healthy",
+    "symptoms": [
+      "Healthy leaves"
+    ],
+    "prevention": [
+      "Routine monitoring"
+    ],
+    "treatment": [
+      "No treatment required"
+    ]
+  },
+
+  "Tan spot": {
+    "crop": "Wheat",
+    "disease": "Tan Spot",
+    "symptoms": [
+      "Tan oval lesions",
+      "Yellow halos"
+    ],
+    "prevention": [
+      "Crop rotation",
+      "Remove crop residue"
+    ],
+    "treatment": [
+      "Propiconazole"
+    ]
+  },
+
+  "Tomato_Bacterial_Spot": {
+    "crop": "Tomato",
+    "disease": "Bacterial Spot",
+    "symptoms": [
+      "Small dark leaf spots",
+      "Fruit lesions"
+    ],
+    "prevention": [
+      "Disease-free seeds",
+      "Avoid overhead irrigation"
+    ],
+    "treatment": [
+      "Copper bactericide"
+    ]
+  },
+
+  "Tomato_Early_Blight": {
+    "crop": "Tomato",
+    "disease": "Early Blight",
+    "symptoms": [
+      "Concentric ring lesions",
+      "Lower leaf yellowing"
+    ],
+    "prevention": [
+      "Crop rotation",
+      "Remove infected debris"
+    ],
+    "treatment": [
+      "Mancozeb",
+      "Chlorothalonil"
+    ]
+  },
+
+  "Tomato_Healthy": {
+    "crop": "Tomato",
+    "disease": "Healthy",
+    "symptoms": [
+      "Healthy foliage"
+    ],
+    "prevention": [
+      "Routine crop care"
+    ],
+    "treatment": [
+      "No treatment required"
+    ]
+  },
+
+  "Tomato_Late_Blight": {
+    "crop": "Tomato",
+    "disease": "Late Blight",
+    "symptoms": [
+      "Dark water-soaked lesions",
+      "White fungal growth"
+    ],
+    "prevention": [
+      "Avoid prolonged leaf wetness",
+      "Improve ventilation"
+    ],
+    "treatment": [
+      "Metalaxyl",
+      "Copper fungicide"
+    ]
+  },
+
+  "Tomato_Leaf_Mold": {
+    "crop": "Tomato",
+    "disease": "Leaf Mold",
+    "symptoms": [
+      "Yellow upper leaf spots",
+      "Olive-green mold underneath"
+    ],
+    "prevention": [
+      "Reduce humidity",
+      "Increase ventilation"
+    ],
+    "treatment": [
+      "Chlorothalonil"
+    ]
+  },
+
+  "Tomato_Mosaic_Virus": {
+    "crop": "Tomato",
+    "disease": "Mosaic Virus",
+    "symptoms": [
+      "Mottled leaves",
+      "Leaf distortion"
+    ],
+    "prevention": [
+      "Use virus-free seed",
+      "Disinfect tools"
+    ],
+    "treatment": [
+      "No direct cure",
+      "Remove infected plants"
+    ]
+  },
+
+  "Tomato_Septoria_Leaf_Spot": {
+    "crop": "Tomato",
+    "disease": "Septoria Leaf Spot",
+    "symptoms": [
+      "Small circular lesions",
+      "Yellowing foliage"
+    ],
+    "prevention": [
+      "Avoid overhead watering",
+      "Field sanitation"
+    ],
+    "treatment": [
+      "Copper fungicide",
+      "Chlorothalonil"
+    ]
+  },
+
+  "Tomato_Spider_Mites": {
+    "crop": "Tomato",
+    "disease": "Spider Mite Infestation",
+    "symptoms": [
+      "Yellow speckles",
+      "Fine webbing"
+    ],
+    "prevention": [
+      "Maintain humidity",
+      "Inspect regularly"
+    ],
+    "treatment": [
+      "Miticide",
+      "Neem oil"
+    ]
+  },
+
+  "Tomato_Target_Spot": {
+    "crop": "Tomato",
+    "disease": "Target Spot",
+    "symptoms": [
+      "Circular brown lesions"
+    ],
+    "prevention": [
+      "Crop rotation",
+      "Improve airflow"
+    ],
+    "treatment": [
+      "Azoxystrobin"
+    ]
+  },
+
+  "Tomato_Yellow_Leaf_Curl_Virus": {
+    "crop": "Tomato",
+    "disease": "Yellow Leaf Curl Virus",
+    "symptoms": [
+      "Yellow curled leaves",
+      "Stunted growth"
+    ],
+    "prevention": [
+      "Control whiteflies",
+      "Use resistant varieties"
+    ],
+    "treatment": [
+      "No direct cure",
+      "Control insect vectors"
+    ]
+  },
+
+  "Wheat_Healthy": {
+    "crop": "Wheat",
+    "disease": "Healthy",
+    "symptoms": [
+      "Healthy foliage"
+    ],
+    "prevention": [
+      "Balanced fertilization",
+      "Routine monitoring"
+    ],
+    "treatment": [
+      "No treatment required"
+    ]
+  },
+
+  "Yellow Rust": {
+    "crop": "Wheat",
+    "disease": "Yellow Rust",
+    "symptoms": [
+      "Yellow stripe-like pustules",
+      "Reduced yield"
+    ],
+    "prevention": [
+      "Grow resistant varieties",
+      "Monitor fields regularly"
+    ],
+    "treatment": [
+      "Propiconazole",
+      "Tebuconazole"
+    ]
+  }
+}

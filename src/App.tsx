@@ -6,6 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { I18nProvider } from "@/contexts/I18nContext";
+import ProtectedRoute from "@/components/ProtectedRoute";
 import Chatbot from "@/components/Chatbot";
 import Index from "./pages/Index";
 import Login from "./pages/Login";
@@ -60,8 +61,26 @@ const AppContent = () => {
       <Routes>
         <Route path="/" element={<Index />} />
         <Route path="/login" element={<Login />} />
-        <Route path="/result" element={<Result />} />
-        <Route path="/profile" element={<Profile />} />
+        
+        {/* Protected Routes - Require Authentication */}
+        <Route 
+          path="/result" 
+          element={
+            <ProtectedRoute>
+              <Result />
+            </ProtectedRoute>
+          } 
+        />
+        <Route 
+          path="/profile" 
+          element={
+            <ProtectedRoute>
+              <Profile />
+            </ProtectedRoute>
+          } 
+        />
+        
+        {/* Public Routes */}
         <Route path="/feedback" element={<Feedback />} />
         <Route path="/guide/:type" element={<GuideDetail />} />
         <Route path="*" element={<NotFound />} />

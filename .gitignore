@@ -32,10 +32,16 @@ __pycache__/
 backend/venv/
 backend/venv312/
 backend/.env
-*.pth
+# Allow specific model files needed for deployment
+# *.pth files are ML models - we need mobilenetv2_plant.pth
+# Comment out to allow model file in git:
+# *.pth
 *.pth.tar
 *.pkl
 *.pickle
+
+# If you prefer to keep models out of git, host them externally
+# and download on deployment (see DEPLOYMENT_GUIDE.md)
 
 # Environment variables (SENSITIVE)
 .env

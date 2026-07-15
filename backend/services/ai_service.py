@@ -5,32 +5,97 @@ import json
 from typing import Optional
 import numpy as np
 
+# Import new Grad-CAM++ module
+from services.gradcam_plus import generate_heatmap_b64 as generate_gradcam_heatmap
+
 # ---------------------------------------------------------------------------
-# Local PyTorch MobileNetV2 model (runs without API calls)
+# Local ML Models (runs without API calls)
 # ---------------------------------------------------------------------------
-_TORCH_MODEL = None
+_ML_MODEL = None
 _CLASS_NAMES = None
+_DISEASE_INFO = None
+
+def _load_disease_info():
+    """Load the disease information knowledge base"""
+    global _DISEASE_INFO
+    if _DISEASE_INFO is not None:
+        return _DISEASE_INFO
+    
+    try:
+        disease_info_path = "disease_info.json"
+        if os.path.exists(disease_info_path):
+            with open(disease_info_path, 'r') as f:
+                _DISEASE_INFO = json.load(f)
+            print(f"[AI] Disease knowledge base loaded with {len(_DISEASE_INFO)} entries")
+        else:
+            print(f"[AI] disease_info.json not found, using fallback treatment")
+            _DISEASE_INFO = {}
+        return _DISEASE_INFO
+    except Exception as e:
+        print(f"[AI] Failed to load disease info: {e}")
+        return {}
+
+def _load_efficientnet_model():
+    """Load the fine-tuned EfficientNet Keras model for plant disease detection"""
+    global _ML_MODEL, _CLASS_NAMES
+    if _ML_MODEL is not None:
+        return _ML_MODEL, _CLASS_NAMES
+    
+    try:
+        import tensorflow as tf
+        
+        # Use the new fine-tuned model
+        model_path = "best_farmlens_finetuned.keras"
+        class_path = "class_names.json"
+        
+        if not os.path.exists(model_path):
+            print(f"[AI] Fine-tuned model not found at {model_path}, trying legacy model...")
+            model_path = "farmlens_efficientnet.keras"
+            if not os.path.exists(model_path):
+                print(f"[AI] EfficientNet model file not found")
+                return None, None
+        
+        # Load class names
+        with open(class_path, 'r') as f:
+            _CLASS_NAMES = json.load(f)
+        
+        # Load the trained Keras model
+        model = tf.keras.models.load_model(model_path)
+        
+        _ML_MODEL = model
+        model_type = "Fine-tuned EfficientNet" if "finetuned" in model_path else "EfficientNet"
+        print(f"[AI] {model_type} model loaded with {len(_CLASS_NAMES)} classes")
+        return _ML_MODEL, _CLASS_NAMES
+    except Exception as e:
+        print(f"[AI] Failed to load EfficientNet model: {e}")
+        import traceback
+        traceback.print_exc()
+        return None, None
 
 def _load_torch_model():
-    """Load the pre-trained MobileNetV2 model for plant disease detection"""
-    global _TORCH_MODEL, _CLASS_NAMES
-    if _TORCH_MODEL is not None:
-        return _TORCH_MODEL, _CLASS_NAMES
+    """Load the legacy PyTorch MobileNetV2 model (fallback)"""
+    global _ML_MODEL, _CLASS_NAMES
     
+    # First try EfficientNet (preferred)
+    model, classes = _load_efficientnet_model()
+    if model is not None:
+        return model, classes
+    
+    # Fallback to PyTorch if EfficientNet fails
     try:
         import torch
         from torchvision import models
         import torch.nn as nn
         
         model_path = "mobilenetv2_plant.pth"
-        class_path = "class_names.json"
+        class_path_legacy = "class_names.json"
         
         if not os.path.exists(model_path):
-            print(f"[AI] Model file not found at {model_path}")
+            print(f"[AI] PyTorch model file not found at {model_path}")
             return None, None
         
         # Load class names
-        with open(class_path, 'r') as f:
+        with open(class_path_legacy, 'r') as f:
             _CLASS_NAMES = json.load(f)
         
         # Build model architecture (same as training)
@@ -44,9 +109,9 @@ def _load_torch_model():
         model.load_state_dict(torch.load(model_path, map_location=torch.device('cpu'), weights_only=True))
         model.eval()
         
-        _TORCH_MODEL = model
-        print(f"[AI] PyTorch model loaded with {len(_CLASS_NAMES)} classes")
-        return _TORCH_MODEL, _CLASS_NAMES
+        _ML_MODEL = model
+        print(f"[AI] PyTorch MobileNetV2 model loaded with {len(_CLASS_NAMES)} classes")
+        return _ML_MODEL, _CLASS_NAMES
     except Exception as e:
         print(f"[AI] Failed to load PyTorch model: {e}")
         import traceback
@@ -54,107 +119,300 @@ def _load_torch_model():
         return None, None
 
 def _torch_predict(image_bytes: bytes) -> dict:
-    """Use local PyTorch MobileNetV2 model for prediction"""
+    """Use custom EfficientNet or PyTorch model for prediction with disease knowledge base"""
     try:
-        import torch
-        from torchvision import transforms
         from PIL import Image
         import io
+        import numpy as np
         
-        model, class_names = _load_torch_model()
+        model, class_names = _load_torch_model()  # Will load EfficientNet first
+        disease_info = _load_disease_info()
+        
         if model is None or class_names is None:
             raise ValueError("Model not available")
         
-        # Preprocess image (same as training)
-        transform = transforms.Compose([
-            transforms.Resize((224, 224)),
-            transforms.ToTensor(),
-            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-        ])
+        # Detect model type
+        is_tensorflow = hasattr(model, 'predict')
         
+        # VERIFY CLASS NAMES
+        print(f"[AI Pipeline] === CLASS NAMES VERIFICATION ===")
+        print(f"[AI Pipeline] Total classes: {len(class_names)}")
+        print(f"[AI Pipeline] First 10 classes:")
+        for i in range(min(10, len(class_names))):
+            print(f"  [{i:2d}] {class_names[i]}")
+        print(f"[AI Pipeline] Last 10 classes:")
+        for i in range(max(0, len(class_names)-10), len(class_names)):
+            print(f"  [{i:2d}] {class_names[i]}")
+        
+        # Preprocess image
         img = Image.open(io.BytesIO(image_bytes)).convert('RGB')
-        x = transform(img).unsqueeze(0)
         
-        # Predict
-        with torch.no_grad():
-            preds = model(x)
-            probs = torch.softmax(preds, dim=1)[0]
+        if is_tensorflow:
+            # TensorFlow/Keras EfficientNet preprocessing
+            import tensorflow as tf
             
-            # Get top 5 predictions to check for confusion
-            top5_probs, top5_indices = torch.topk(probs, min(5, len(probs)))
+            # Step 1: Resize to model input size (224x224 for EfficientNet)
+            img_resized = img.resize((224, 224))
+            img_array = np.array(img_resized, dtype=np.float32)
             
-            confidence = float(top5_probs[0])
-            index = top5_indices[0].item()
+            print(f"[AI Pipeline] === INFERENCE DEBUG ===")
+            print(f"[AI Pipeline] Step 1 - Image shape: {img_array.shape}")
+            print(f"[AI Pipeline] Step 1 - Pixel range: [{img_array.min():.1f}, {img_array.max():.1f}]")
             
-            # Log top predictions for debugging
-            print(f"[AI] Top 5 predictions:")
-            for i in range(min(5, len(top5_indices))):
-                idx = top5_indices[i].item()
-                prob = float(top5_probs[i])
-                print(f"  {i+1}. {class_names[idx]} ({prob*100:.1f}%)")
+            # Step 2: Expand batch dimension
+            img_array = np.expand_dims(img_array, axis=0)
+            print(f"[AI Pipeline] Step 2 - Batch shape: {img_array.shape}")
             
-            # Handle potato/tomato confusion
-            # If top prediction is tomato but potato is in top 3 with similar confidence, check further
-            top_label = class_names[index]
-            if 'Tomato' in top_label and confidence < 0.70:  # Low confidence tomato
-                # Check if potato is in top 3
-                for i in range(min(3, len(top5_indices))):
+            # Step 3: CORRECT PREPROCESSING for EfficientNet
+            # The model has internal rescaling layers that expect [0, 255]
+            # NO external preprocessing needed - just normalize to [0, 1] for numerical stability
+            from tensorflow.keras.applications.efficientnet import preprocess_input
+
+            img_array = preprocess_input(img_array)
+            print(f"[AI Pipeline] Step 3 - After [0,255]→[0,1]: range [{img_array.min():.3f}, {img_array.max():.3f}]")
+            print(f"[AI Pipeline] Step 3 - Model will apply internal rescaling layers")
+            
+            # Step 4: Predict
+            print(f"[AI Pipeline] Step 4 - Running model prediction...")
+            preds = model.predict(img_array, verbose=0)
+            probs = preds[0]
+            predicted_idx = int(np.argmax(probs))
+            confidence = float(probs[predicted_idx])
+            
+            # Print RAW PREDICTION VECTOR
+            print(f"[AI Pipeline] Step 5 - RAW SOFTMAX OUTPUT (first 10 classes):")
+            for i in range(min(10, len(probs))):
+                print(f"  [{i:2d}] {class_names[i]:40s} = {probs[i]:.6f}")
+            
+            # Get top 5 predictions
+            top5_indices = np.argsort(probs)[-5:][::-1]
+            print(f"[AI Pipeline] === TOP 5 PREDICTIONS ===")
+            for rank, idx in enumerate(top5_indices, 1):
+                print(f"  #{rank} [{idx:2d}] {class_names[idx]:40s} = {probs[idx]*100:.2f}%")
+            
+            print(f"[AI Pipeline] === FINAL RESULT ===")
+            print(f"[AI Pipeline] Predicted Index: {predicted_idx}")
+            print(f"[AI Pipeline] Predicted Class: {class_names[predicted_idx]}")
+            print(f"[AI Pipeline] Raw Confidence: {confidence:.6f}")
+            print(f"[AI Pipeline] Confidence %: {confidence*100:.2f}%")
+            print(f"[AI Pipeline] Sum of probs: {probs.sum():.6f}")
+            print(f"[AI Pipeline] Max prob: {probs.max():.6f}, Min prob: {probs.min():.6f}")
+            for i, idx in enumerate(top5_indices):
+                print(f"  {i+1}. {class_names[idx]} ({probs[idx]*100:.1f}%)")
+            
+            # DEBUG: Log raw model output statistics
+            print(f"[AI] DEBUG - Confidence stats:")
+            print(f"  - Max prob: {probs.max():.4f}")
+            print(f"  - Mean prob: {probs.mean():.4f}")
+            print(f"  - Top prob: {confidence:.4f}")
+            print(f"  - Image shape: {img_array.shape}, range: [{img_array.min():.3f}, {img_array.max():.3f}]")
+        
+        else:
+            # PyTorch preprocessing
+            import torch
+            from torchvision import transforms
+            
+            transform = transforms.Compose([
+                transforms.Resize((224, 224)),
+                transforms.ToTensor(),
+                transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+            ])
+            
+            x = transform(img).unsqueeze(0)
+            
+            # Predict
+            with torch.no_grad():
+                preds = model(x)
+                probs = torch.softmax(preds, dim=1)[0]
+                top5_probs, top5_indices = torch.topk(probs, min(5, len(probs)))
+                
+                confidence = float(top5_probs[0])
+                predicted_idx = top5_indices[0].item()
+                
+                print(f"[AI] Top 5 PyTorch predictions:")
+                for i in range(min(5, len(top5_indices))):
                     idx = top5_indices[i].item()
                     prob = float(top5_probs[i])
-                    label = class_names[idx]
-                    if 'Potato' in label and prob > confidence * 0.7:  # Potato is close
-                        print(f"[AI] Detected potato/tomato confusion. Switching to potato (was {confidence*100:.1f}%, potato is {prob*100:.1f}%)")
-                        index = idx
-                        confidence = prob
-                        break
+                    print(f"  {i+1}. {class_names[idx]} ({prob*100:.1f}%)")
+                
+                # For PyTorch, we don't have img_array in the right format for Grad-CAM
+                img_array = None
         
-        # Parse label (format: "Crop___Disease")
-        label = class_names[index]
-        parts = label.split('___')
-        crop = parts[0].replace('_', ' ').replace('(', '').replace(')', '').strip()
-        disease_raw = parts[1].replace('_', ' ').strip() if len(parts) > 1 else "Unknown"
+        # Get predicted class label
+        label = class_names[predicted_idx]
+        print(f"[AI] Selected prediction: {label} ({confidence*100:.1f}%)")
+        
+        # Parse label - handle different formats
+        # Format 1: "Crop___Disease" (e.g., "Tomato___Late_blight")
+        # Format 2: "Crop_Disease" (e.g., "Tomato_Late_Blight", "Cotton_Healthy")
+        # Format 3: "Disease" only (e.g., "Aphid", "Blast")
+        
+        if '___' in label:
+            # Standard format: Crop___Disease
+            parts = label.split('___')
+            crop = parts[0].replace('_', ' ').replace('(', '').replace(')', '').strip()
+            disease_raw = parts[1].replace('_', ' ').strip() if len(parts) > 1 else "Unknown"
+        elif '_' in label:
+            # Format: Crop_Disease
+            # Find the crop name - check for known crops first
+            found = False
+            for crop_name in ['Cotton', 'Tomato', 'Potato', 'Rice', 'Wheat', 'Corn', 'Apple', 'Grape', 'Orange', 'Peach', 'Pepper', 'Raspberry', 'Blueberry', 'Strawberry', 'Squash', 'Soybean', 'Cherry']:
+                if label.startswith(crop_name):
+                    crop = crop_name
+                    disease_raw = label[len(crop_name)+1:].replace('_', ' ')
+                    found = True
+                    break
+            
+            if not found:
+                crop = "Unknown"
+                disease_raw = label.replace('_', ' ')
+        else:
+            # Disease only format (Aphid, Blast, Smut, etc.)
+            crop = "General"  # Will be refined from disease_info
+            disease_raw = label.replace('_', ' ')
         
         is_healthy = 'healthy' in disease_raw.lower()
         disease = "Healthy" if is_healthy else disease_raw
         
-        # Calculate severity based on confidence
-        # Higher confidence in disease detection = higher severity
-        severity = 0 if is_healthy else max(40, min(95, int(confidence * 80 + 20)))
-        confidence_pct = min(99, int(confidence * 100))
+        # Get detailed information from disease knowledge base
+        treatment = ""
+        symptoms = []
+        prevention = []
         
-        # Treatment recommendations
-        treatments = {
-            "scab": "Apply fungicides (captan or myclobutanil) at bud break. Remove infected leaves.",
-            "black rot": "Prune infected branches. Apply copper-based fungicides. Remove mummified fruits.",
-            "rust": "Apply fungicides (myclobutanil) in spring. Improve air circulation.",
-            "blight": "Apply copper-based fungicides immediately. Remove infected leaves. Avoid overhead watering.",
-            "mildew": "Apply sulfur or potassium bicarbonate. Improve ventilation. Reduce humidity.",
-            "spot": "Apply chlorothalonil or copper fungicides. Remove infected foliage. Rotate crops.",
-            "rot": "Improve drainage. Apply fungicides. Remove infected plant material.",
-            "mold": "Improve ventilation. Apply fungicides. Reduce humidity.",
-            "scorch": "Ensure adequate watering. Mulch to retain moisture. Avoid drought stress.",
-            "mosaic": "Remove infected plants immediately. Control aphid vectors. Use resistant varieties.",
-            "curl": "Remove infected leaves. Control whitefly vectors. Apply appropriate insecticides.",
-            "mites": "Apply miticides. Increase humidity. Remove heavily infested leaves.",
-            "greening": "Remove infected trees. Control psyllid vectors. No cure available.",
-            "healthy": "Maintain regular watering and fertilization. Monitor for early signs of disease.",
-        }
-        treatment = next(
-            (v for k, v in treatments.items() if k in disease.lower()),
-            "Apply appropriate fungicide for the detected disease. Remove infected plant material. Consult local agricultural extension for specific treatment."
-        )
+        # Try to find exact match in disease_info
+        if label in disease_info:
+            info = disease_info[label]
+            crop = info.get('crop', crop)  # Override with more accurate crop name
+            disease = info.get('disease', disease)
+            symptoms = info.get('symptoms', [])
+            prevention = info.get('prevention', [])
+            treatment_list = info.get('treatment', [])
+            
+            # Build detailed treatment from knowledge base with proper formatting
+            treatment_parts = []
+            
+            if treatment_list:
+                # Format treatment as a proper sentence with "Apply" prefix
+                if len(treatment_list) == 1:
+                    treatment_parts.append(f"Apply {treatment_list[0]} fungicide immediately.")
+                else:
+                    # Join multiple treatments with commas
+                    treatments_str = ", ".join(treatment_list[:-1]) + f", or {treatment_list[-1]}"
+                    treatment_parts.append(f"Treatment: Apply {treatments_str} according to label instructions.")
+            
+            if prevention:
+                # Add prevention as a separate sentence
+                if len(prevention) == 1:
+                    treatment_parts.append(f"Prevention: {prevention[0]}.")
+                elif len(prevention) == 2:
+                    treatment_parts.append(f"Prevention: {prevention[0]} and {prevention[1].lower()}.")
+                else:
+                    # Take top 3 prevention measures
+                    prev_str = ", ".join(prevention[:2]) + f", and {prevention[2].lower()}"
+                    treatment_parts.append(f"Prevention: {prev_str}.")
+            
+            if symptoms:
+                # Add symptoms information
+                if len(symptoms) <= 2:
+                    symp_str = " and ".join(symptoms)
+                else:
+                    symp_str = ", ".join(symptoms[:2]) + f", and {symptoms[2]}"
+                treatment_parts.append(f"Common symptoms include: {symp_str}.")
+            
+            treatment = " ".join(treatment_parts)
         
-        return {
+        # Fallback treatment if not found in knowledge base
+        if not treatment:
+            treatments = {
+                "scab": "Apply fungicides (captan or myclobutanil) at bud break. Remove infected leaves.",
+                "black rot": "Prune infected branches. Apply copper-based fungicides. Remove mummified fruits.",
+                "rust": "Apply fungicides (myclobutanil) in spring. Improve air circulation.",
+                "blight": "Apply copper-based fungicides immediately. Remove infected leaves. Avoid overhead watering.",
+                "mildew": "Apply sulfur or potassium bicarbonate. Improve ventilation. Reduce humidity.",
+                "spot": "Apply chlorothalonil or copper fungicides. Remove infected foliage. Rotate crops.",
+                "rot": "Improve drainage. Apply fungicides. Remove infected plant material.",
+                "mold": "Improve ventilation. Apply fungicides. Reduce humidity.",
+                "mosaic": "Remove infected plants immediately. Control aphid vectors. Use resistant varieties.",
+                "curl": "Remove infected leaves. Control whitefly vectors. Apply appropriate insecticides.",
+                "mite": "Apply miticides. Increase humidity. Remove heavily infested leaves.",
+                "healthy": "Maintain regular watering and fertilization. Monitor for early signs of disease.",
+            }
+            treatment = next(
+                (v for k, v in treatments.items() if k in disease.lower()),
+                "Apply appropriate fungicide or pesticide based on disease type. Remove infected plant material. Consult local agricultural extension for specific treatment."
+            )
+        
+        # Calculate severity based on confidence and disease type
+        # IMPORTANT: Healthy plants should have 0% severity, regardless of confidence
+        if is_healthy:
+            severity = 0
+            confidence_pct = min(99, int(confidence * 100))
+        else:
+            # For diseased plants: map confidence to severity
+            # Low confidence (60-70%) = Low severity (30-50%)
+            # Medium confidence (70-85%) = Medium severity (50-70%)
+            # High confidence (85-100%) = High severity (70-95%)
+            confidence_pct = min(99, int(confidence * 100))
+            
+            if confidence < 0.7:  # Low confidence
+                severity = max(30, min(50, int(confidence * 70)))
+            elif confidence < 0.85:  # Medium confidence
+                severity = max(50, min(70, int(confidence * 80)))
+            else:  # High confidence
+                severity = max(70, min(95, int(confidence * 95)))
+        
+        # Build explanation
+        model_name = "Fine-tuned EfficientNet" if is_tensorflow else "MobileNetV2"
+        explanation = f"Detected {disease} in {crop} with {confidence_pct}% confidence using {model_name} deep learning model."
+        
+        if symptoms:
+            explanation += f" Symptoms: {', '.join(symptoms[:3])}."
+        
+        # Special case: If confidence is very low and there's a healthy class in top-5, prefer healthy
+        # This helps fix misidentifications of healthy plants as diseased
+        if is_tensorflow and confidence_pct < 30:  # Very low confidence
+            print(f"[AI] ⚠️ Very low confidence ({confidence_pct}%) - checking if it might be healthy...")
+            # Check if any healthy class is in top-5
+            for i, idx in enumerate(top5_indices[:5]):  # top 5
+                class_label = class_names[idx]
+                prob = probs[idx] * 100
+                if 'healthy' in class_label.lower():
+                    print(f"[AI] ✓ Found '{class_label}' in top-5 (rank {i+1}, prob {prob:.1f}%)")
+                    # If healthy is in top-5 and has higher probability, use it instead
+                    if prob > confidence_pct * 0.8:  # If healthy prob is at least 80% of current
+                        print(f"[AI] → Switching to healthy prediction")
+                        label = class_label
+                        predicted_idx = idx
+                        confidence = probs[idx]
+                        confidence_pct = int(confidence * 100)
+                        is_healthy = True
+                        disease = "Healthy"
+                        severity = 0
+                        crop = class_label.replace('_', ' ').replace('_Healthy', '').strip()
+                        treatment = "Maintain regular watering schedule (2-3cm per week) and balanced fertilization (NPK 10-10-10 monthly). Monitor plants weekly for early signs of disease or pest damage. For prevention: practice crop rotation annually, maintain soil health with compost, and remove weeds that harbor pests."
+                        explanation = f"Plant appears healthy. No significant disease detected. Recommend continued monitoring and preventive care."
+                        break
+        
+        # Return result with Grad-CAM++ metadata (for TensorFlow models only)
+        result = {
             "crop": crop,
             "disease": disease,
             "severity": severity,
             "confidence": confidence_pct,
             "status": "Healthy" if is_healthy else "Infected",
-            "explanation": f"Detected {disease} in {crop} with {confidence_pct}% confidence using deep learning model.",
+            "explanation": explanation,
             "treatment": treatment,
         }
+        
+        # Add Grad-CAM++ metadata for TensorFlow models
+        if is_tensorflow and img_array is not None:
+            result["_gradcam_model"] = model
+            result["_gradcam_img_array"] = img_array
+            result["_gradcam_class_idx"] = predicted_idx
+        
+        return result
     except Exception as e:
-        print(f"[AI] PyTorch model prediction failed: {e}")
+        print(f"[AI] Model prediction failed: {e}")
         import traceback
         traceback.print_exc()
         raise
@@ -353,6 +611,42 @@ def _color_based_predict(image_bytes: bytes) -> dict:
             coffee_score += 25  # Strong indicator of coffee rust
             print(f"[Color Analysis] Strong rust pattern - coffee rust likely")
         
+        # Cotton: broad heart-shaped or oval leaves, bright green, soft texture
+        cotton_score = 0
+        if 45 <= mean_hue <= 75:  # Bright green
+            cotton_score += 35
+        if mean_sat > 80:  # High saturation (vibrant green)
+            cotton_score += 30
+        if texture_var > 200 and texture_var < 600:  # Moderate texture (not too smooth, not too rough)
+            cotton_score += 25
+        if wrinkle_score < 8:  # Smooth leaves (less wrinkled than potato)
+            cotton_score += 20
+        if edge_density < 0.16:  # Broad leaves with fewer edges
+            cotton_score += 20
+        if dark_ratio < 0.1:  # Very few dark areas (Cotton is mostly healthy green)
+            cotton_score += 25
+        # Penalty if too much disease color pattern
+        if brown_ratio > 0.25 or dark_ratio > 0.2:
+            cotton_score -= 30  # Cotton rarely has brown/dark spots
+        
+        # Rice: thin grass-like leaves, low saturation, yellowish-green tint
+        rice_score = 0
+        if 30 <= mean_hue <= 60:  # Yellow-green to green
+            rice_score += 25
+        if mean_sat < 60:  # Lower saturation (less vibrant)
+            rice_score += 30
+        if mean_val > 100:  # Light colored
+            rice_score += 20
+        if texture_var < 400:  # Fine texture (grass-like)
+            rice_score += 25
+        if edge_density > 0.20:  # Many thin edges (blade-like leaves)
+            rice_score += 25
+        if yellow_ratio > 0.15:  # Yellowish tint
+            rice_score += 15
+        # Rice often shows brown spots, so don't penalize as much
+        if brown_ratio > 0.1:
+            rice_score += 15  # Brown spots are common in rice diseases
+        
         # Select crop with highest score
         scores = {
             "Potato": potato_score,
@@ -361,6 +655,8 @@ def _color_based_predict(image_bytes: bytes) -> dict:
             "Wheat": wheat_score,
             "Grape": grape_score,
             "Coffee": coffee_score,
+            "Cotton": cotton_score,
+            "Rice": rice_score,
         }
         
         crop = max(scores, key=scores.get)
@@ -938,164 +1234,295 @@ def _mock_predict(image_bytes: bytes) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Heatmap generation (works without a real model — highlights high-contrast
-# regions as a proxy for "areas of interest")
 # ---------------------------------------------------------------------------
-def generate_heatmap_b64(image_bytes: bytes, severity: int) -> str:
+# OLD GRAD-CAM IMPLEMENTATION - REPLACED BY Grad-CAM++ (gradcam_plus.py)
+# ---------------------------------------------------------------------------
+# The following functions are deprecated and no longer used.
+# Kept here for reference only.
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# End of deprecated code
+# ---------------------------------------------------------------------------
     """
-    Returns a base64-encoded JPEG of the image with a disease heatmap overlay.
-    Red/yellow = most infected regions, blue/green = least infected.
-    Uses colour deviation from healthy green to detect diseased areas.
+    Generate Grad-CAM heatmap using the actual ML model's activations.
+    Returns the raw heatmap array for further processing.
     """
     try:
-        import cv2
-        import numpy as np
-
-        nparr = np.frombuffer(image_bytes, np.uint8)
-        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        if img is None:
-            return ""
-
-        h, w = img.shape[:2]
-
-        # --- Disease detection via colour analysis ---
-        # Convert to HSV — diseased areas (brown/yellow/dark) deviate from healthy green
-        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-
-        # Healthy green mask (hue 35-85, decent saturation)
-        healthy_mask = cv2.inRange(hsv, np.array([35, 40, 40]), np.array([85, 255, 255]))
-
-        # Disease score = inverse of healthy green presence
-        disease_map = cv2.bitwise_not(healthy_mask).astype(np.float32) / 255.0
-
-        # Also boost areas with brown/yellow tones (typical disease colours)
-        brown_mask = cv2.inRange(hsv, np.array([10, 50, 50]), np.array([35, 255, 200]))
-        yellow_mask = cv2.inRange(hsv, np.array([20, 80, 100]), np.array([40, 255, 255]))
-        disease_boost = (brown_mask.astype(np.float32) + yellow_mask.astype(np.float32)) / 255.0
-        disease_map = np.clip(disease_map + disease_boost * 0.5, 0, 1)
-
-        # Smooth the map for a natural look
-        disease_map = cv2.GaussianBlur(disease_map, (21, 21), 0)
-        disease_map = cv2.normalize(disease_map, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-
-        # Apply JET colormap: blue=least infected → red=most infected
-        heatmap_color = cv2.applyColorMap(disease_map, cv2.COLORMAP_JET)
-
-        # Blend: stronger overlay where severity is higher
-        alpha = 0.35 + (severity / 100.0) * 0.35  # range 0.35–0.70
-        blended = cv2.addWeighted(img, 1.0 - alpha * 0.4, heatmap_color, alpha, 0)
-
-        # Add a colour legend bar at the bottom with percentage markers
-        bar_h = max(24, h // 15)  # Slightly taller for better visibility
-        legend = np.zeros((bar_h, w, 3), dtype=np.uint8)
+        import tensorflow as tf
         
-        # Create gradient bar
-        for x in range(w):
-            val = int(x / w * 255)
-            color = cv2.applyColorMap(np.array([[val]], dtype=np.uint8), cv2.COLORMAP_JET)[0][0]
-            legend[:, x] = color
+        # Get the last convolutional layer
+        last_conv_layer = None
+        for layer in reversed(model.layers):
+            if len(layer.output_shape) == 4:  # Convolutional layer
+                last_conv_layer = layer
+                break
         
-        # Add labels with better visibility
-        font = cv2.FONT_HERSHEY_SIMPLEX
-        fs = max(0.35, bar_h / 50)
-        thickness = max(1, int(bar_h / 20))
+        if last_conv_layer is None:
+            print("[Grad-CAM] No convolutional layer found")
+            return None
         
-        # Add percentage markers
-        markers = [
-            (0, "0%", 4),
-            (0.25, "25%", None),
-            (0.5, "50%", None),
-            (0.75, "75%", None),
-            (1.0, "100%", w - 40)
-        ]
+        print(f"[Grad-CAM] Using layer: {last_conv_layer.name}")
         
-        for pos, label, x_override in markers:
-            x_pos = x_override if x_override is not None else int(w * pos) - 15
-            # Add black outline for better readability
-            cv2.putText(legend, label, (x_pos, bar_h - 6), font, fs, (0, 0, 0), thickness + 1, cv2.LINE_AA)
-            cv2.putText(legend, label, (x_pos, bar_h - 6), font, fs, (255, 255, 255), thickness, cv2.LINE_AA)
+        # Create a model that maps the input image to the activations of the last conv layer
+        grad_model = tf.keras.models.Model(
+            [model.inputs],
+            [last_conv_layer.output, model.output]
+        )
         
-        # Add descriptive labels at top of legend
-        label_y = int(bar_h * 0.4)
-        cv2.putText(legend, "Healthy", (4, label_y), font, fs * 0.8, (0, 0, 0), thickness + 1, cv2.LINE_AA)
-        cv2.putText(legend, "Healthy", (4, label_y), font, fs * 0.8, (255, 255, 255), thickness, cv2.LINE_AA)
+        # Compute gradient of the predicted class with respect to the feature map
+        with tf.GradientTape() as tape:
+            conv_outputs, predictions = grad_model(img_array)
+            loss = predictions[:, class_idx]
         
-        cv2.putText(legend, "Infected", (w - 60, label_y), font, fs * 0.8, (0, 0, 0), thickness + 1, cv2.LINE_AA)
-        cv2.putText(legend, "Infected", (w - 60, label_y), font, fs * 0.8, (255, 255, 255), thickness, cv2.LINE_AA)
-
-        output = np.vstack([blended, legend])
-
-        _, buf = cv2.imencode(".jpg", output, [cv2.IMWRITE_JPEG_QUALITY, 88])
-        return "data:image/jpeg;base64," + base64.b64encode(buf.tobytes()).decode()
+        # Extract gradients
+        grads = tape.gradient(loss, conv_outputs)
+        
+        # Pool the gradients over all the axes leaving out the channel dimension
+        pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
+        
+        # Weight the channels by the gradients
+        conv_outputs = conv_outputs[0]
+        pooled_grads = pooled_grads.numpy()
+        conv_outputs = conv_outputs.numpy()
+        
+        for i in range(pooled_grads.shape[0]):
+            conv_outputs[:, :, i] *= pooled_grads[i]
+        
+        # Average over all the filters to get a single 2D heatmap
+        heatmap = np.mean(conv_outputs, axis=-1)
+        
+        # Normalize between 0 and 1
+        heatmap = np.maximum(heatmap, 0)
+        if np.max(heatmap) != 0:
+            heatmap /= np.max(heatmap)
+        
+        return heatmap
+        
     except Exception as e:
-        print(f"[Heatmap] generation failed: {e}")
-        return ""
+        print(f"[Grad-CAM] Failed to generate: {e}")
+        return None
 
 
 # ---------------------------------------------------------------------------
-# Public entry point
+# Public entry point with enhanced structured output
 # ---------------------------------------------------------------------------
 def predict(image_bytes: Optional[bytes] = None, language: str = "en") -> dict:
+    """
+    Main prediction pipeline that returns structured JSON containing:
+    - crop: Detected crop name
+    - disease: Detected disease name  
+    - severity: Disease severity (0-100)
+    - confidence: Model confidence (0-100)
+    - status: "Healthy" or "Infected"
+    - image_url: URL or identifier of the uploaded image
+    - heatmap_url: URL of the heatmap (if applicable)
+    - heatmap_b64: Base64-encoded heatmap image
+    - explanation: Brief explanation of the diagnosis
+    - treatment: Personalized treatment recommendations
+    - precautions: Prevention and precautionary measures
+    
+    Prediction Priority:
+    1. Custom ML Model (EfficientNet with 66 disease classes) - PRIMARY
+    2. Claude AI (backup)
+    3. Color-based analysis (fallback)
+    4. Mock prediction (final fallback)
+    """
     if not image_bytes:
         return {
-            "crop": "Unknown", "disease": "Unknown", "severity": 0,
-            "confidence": 0, "status": "Unknown",
-            "heatmap_b64": "", "explanation": "No image provided.", "treatment": "",
+            "crop": "Unknown",
+            "disease": "Unknown",
+            "severity": 0,
+            "confidence": 0,
+            "status": "Unknown",
+            "image_url": "",
+            "heatmap_url": "",
+            "heatmap_b64": "",
+            "explanation": "No image provided.",
+            "treatment": "",
+            "precautions": ""
         }
 
-    print(f"[AI] Predict called with language: {language}")  # Debug logging
+    print(f"[AI Pipeline] Starting prediction with language: {language}")
 
-    # PRIORITY: Gemini (most accurate) > PyTorch (limited classes) > Claude > Color-based
+    # PREDICTION PRIORITY: Custom ML Model (66 classes) > Claude > Color-based > Mock
     result = None
+    method_used = "unknown"
     
-    # Try Gemini first (most accurate when available)
-    if os.environ.get("GEMINI_API_KEY"):
-        try:
-            print("[AI] Trying Gemini Vision API (primary method)...")
-            print(f"[AI] Passing language to Gemini: {language}")
-            result = _gemini_predict(image_bytes, language=language)
-            print(f"[AI] Gemini result: {result['crop']} / {result['disease']} ({result['confidence']}% confidence)")
-        except Exception as e:
-            print(f"[AI] Gemini failed: {e}")
+    # 1. Try custom ML model first (Fine-tuned EfficientNet with 66 disease classes - PRIMARY METHOD)
+    try:
+        print("[AI Pipeline] ✓ Step 1: Using fine-tuned EfficientNet model (66 classes - primary method)...")
+        result = _torch_predict(image_bytes)
+        method_used = "Fine-tuned EfficientNet Model"
+        print(f"[AI Pipeline] ✅ ML Model success: {result['crop']} / {result['disease']} ({result['confidence']}% confidence)")
+        
+        # Quality check: If prediction seems suspicious, log a warning
+        # (e.g., very high confidence on disease might be misclassification)
+        if result['confidence'] > 95 and result['disease'] != 'Healthy':
+            print(f"[AI Pipeline] ⚠️ WARNING: Very high confidence ({result['confidence']}%) on disease detection.")
+            print(f"[AI Pipeline] ⚠️ This might be a misclassification. Review the uploaded image.")
+            print(f"[AI Pipeline] ℹ️ If incorrect, consider using Claude AI backup by setting ANTHROPIC_API_KEY")
+        
+    except Exception as e:
+        print(f"[AI Pipeline] ❌ ML Model failed: {e}")
+        import traceback
+        traceback.print_exc()
     
-    # Try PyTorch if Gemini failed (local model, limited to 38 classes)
-    if not result:
-        try:
-            print("[AI] Using PyTorch MobileNetV2 model for analysis...")
-            result = _torch_predict(image_bytes)
-            print(f"[AI] PyTorch result: {result['crop']} / {result['disease']} ({result['confidence']}% confidence)")
-        except Exception as e:
-            print(f"[AI] PyTorch model failed: {e}")
-    
-    # Try Claude if both failed
+    # 2. Try Claude as backup (if ML model fails)
     if not result and os.environ.get("ANTHROPIC_API_KEY"):
         try:
-            print("[AI] Trying Claude (Anthropic) as backup...")
+            print("[AI Pipeline] ✓ Step 2: Using Claude (Anthropic) as backup...")
             result = _claude_predict(image_bytes, language=language)
-            print(f"[AI] Claude result: {result['crop']} / {result['disease']} ({result['confidence']}% confidence)")
+            method_used = "Claude AI"
+            print(f"[AI Pipeline] ✅ Claude success: {result['crop']} / {result['disease']} ({result['confidence']}% confidence)")
         except Exception as e:
-            print(f"[AI] Claude failed: {e}")
+            print(f"[AI Pipeline] ❌ Claude failed: {e}")
             if "credit balance" in str(e).lower():
-                print("[AI] Claude needs credits. Add $5 at https://console.anthropic.com/settings/billing")
+                print("[AI Pipeline] ⚠️ Claude needs credits. Add $5 at https://console.anthropic.com/settings/billing")
     
-    # Try color-based analysis as last resort
+    # 3. Try color-based analysis as last resort
     if not result:
         try:
-            print("[AI] Using fast color-based analysis as fallback...")
+            print("[AI Pipeline] ✓ Step 3: Using color-based analysis (fallback)...")
             result = _color_based_predict(image_bytes)
-            print(f"[AI] Color result: {result['crop']} / {result['disease']} ({result['confidence']}% confidence)")
+            method_used = "Color Analysis"
+            print(f"[AI Pipeline] ✅ Color analysis success: {result['crop']} / {result['disease']} ({result['confidence']}% confidence)")
         except Exception as e:
-            print(f"[AI] Color analysis failed: {e}")
+            print(f"[AI Pipeline] ❌ Color analysis failed: {e}")
     
-    # Final fallback to mock
+    # 4. Final fallback to mock
     if not result:
-        print("[AI] All methods failed, using mock prediction")
+        print("[AI Pipeline] ⚠️ All methods failed, using mock prediction")
         result = _mock_predict(image_bytes)
+        method_used = "Mock (Fallback)"
 
+    # Enhance result with additional fields
+    print(f"[AI Pipeline] 📊 Final result from {method_used}")
+    print(f"[AI Pipeline] - Crop: {result['crop']}")
+    print(f"[AI Pipeline] - Disease: {result['disease']}")
+    print(f"[AI Pipeline] - Severity: {result['severity']}%")
+    print(f"[AI Pipeline] - Confidence: {result['confidence']}%")
+    
+    # Extract precautions from disease info
+    disease_info = _load_disease_info()
+    precautions = []
+    disease_key = ""  # Track the matched disease key
+    
+    # Try to find precautions in disease knowledge base
+    for key, info in disease_info.items():
+        if (result['disease'].lower() in key.lower() or 
+            result['disease'].lower() in info.get('disease', '').lower()):
+            precautions = info.get('prevention', [])
+            disease_key = key  # Store the matched disease key
+            if precautions:
+                print(f"[AI Pipeline] ✓ Found {len(precautions)} precautions from knowledge base")
+                print(f"[AI Pipeline] ✓ Disease key: {disease_key}")
+                break
+    
+    # Default precautions if none found
+    if not precautions:
+        if result['status'] == "Healthy":
+            precautions = [
+                "Continue regular monitoring for early disease detection",
+                "Maintain proper irrigation and avoid water stress",
+                "Apply balanced fertilizers according to crop needs",
+                "Practice crop rotation to prevent soil-borne diseases",
+                "Remove weeds regularly to reduce pest harboring"
+            ]
+        else:
+            precautions = [
+                "Monitor plants daily for spreading of disease",
+                "Isolate infected plants to prevent disease spread",
+                "Avoid working with plants when leaves are wet",
+                "Sterilize pruning tools between plants",
+                "Remove and destroy infected plant debris immediately",
+                "Practice crop rotation for at least 2-3 years"
+            ]
+    
+    # Generate Grad-CAM++ heatmap for infected plants
     heatmap_b64 = ""
-    if result["status"] == "Infected":
-        heatmap_b64 = generate_heatmap_b64(image_bytes, result["severity"])
+    if result["status"] == "Infected" and result["severity"] > 0:
+        print(f"[AI Pipeline] === GRAD-CAM HEATMAP GENERATION ===")
+        print(f"[AI Pipeline] Status: {result['status']}, Severity: {result['severity']}")
+        
+        # Extract Grad-CAM++ metadata if available
+        model = result.get("_gradcam_model")
+        img_array = result.get("_gradcam_img_array")
+        class_idx = result.get("_gradcam_class_idx", 0)
+        
+        print(f"[AI Pipeline] Metadata check:")
+        print(f"  - Model: {model is not None} (type: {type(model).__name__ if model else 'None'})")
+        print(f"  - Image array: {img_array is not None} (shape: {img_array.shape if img_array is not None else 'None'})")
+        print(f"  - Class index: {class_idx}")
+        
+        if model is not None and img_array is not None:
+            try:
+                print(f"[AI Pipeline] Calling generate_gradcam_heatmap...")
+                # Generate heatmap using new Grad-CAM++ implementation
+                heatmap_b64 = generate_gradcam_heatmap(
+                    image_bytes, 
+                    result["severity"],
+                    result.get("crop", "Unknown"),
+                    result.get("disease", "Unknown"),
+                    result.get("confidence", 0),
+                    model=model,
+                    img_array=img_array,
+                    class_idx=class_idx
+                )
+                print("\n========== HEATMAP DEBUG ==========")
+                print("Heatmap generated:", heatmap_b64 is not None)
+                print("Heatmap length:", len(heatmap_b64) if heatmap_b64 else 0)
+                print("==================================\n")
+                
+                if heatmap_b64:
+                    print(f"[AI Pipeline] ✅ Heatmap SUCCESS - Size: {len(heatmap_b64)} bytes")
+                else:
+                    print(f"[AI Pipeline] ⚠️ Heatmap EMPTY STRING returned")
+            except Exception as e:
+                print(f"[AI Pipeline] ❌ Heatmap EXCEPTION: {e}")
+                import traceback
+                traceback.print_exc()
+                heatmap_b64 = ""
+        else:
+            print(f"[AI Pipeline] ⚠️ SKIPPING HEATMAP - Missing metadata")
+            if model is None:
+                print(f"  - Model is None (not stored from TensorFlow inference)")
+            if img_array is None:
+                print(f"  - Image array is None (not stored from TensorFlow inference)")
+    else:
+        print(f"[AI Pipeline] Skipping heatmap (Status: {result['status']}, Severity: {result['severity']}))")
+    
+    # Clean up metadata from result (don't send to API response)
+    result.pop("_gradcam_model", None)
+    result.pop("_gradcam_img_array", None)
+    result.pop("_gradcam_class_idx", None)
 
-    result["heatmap_b64"] = heatmap_b64
-    result["heatmap_url"] = ""
-    return result
+    # Build comprehensive structured response
+    response = {
+        "crop": result.get("crop", "Unknown"),
+        "disease": result.get("disease", "Unknown"),
+        "disease_key": disease_key,  # Include the database key for disease info lookup
+        "severity": result.get("severity", 0),
+        "confidence": result.get("confidence", 0),
+        "status": result.get("status", "Unknown"),
+        "image_url": "",  # Will be set by the route handler
+        "heatmap_url": "",  # Will be set if uploaded to storage
+        "heatmap_b64": heatmap_b64,
+        "explanation": result.get("explanation", "Analysis completed using AI vision models."),
+        "treatment": result.get("treatment", "Consult local agricultural extension for specific treatment recommendations."),
+        "precautions": " ".join(precautions) if isinstance(precautions, list) else precautions
+    }
+    
+    # DEBUG: Verify response structure
+    print(f"[AI Pipeline] === API RESPONSE ===")
+    print(f"[AI Pipeline] Response keys: {list(response.keys())}")
+    print(f"[AI Pipeline] Heatmap included: {bool(response['heatmap_b64'])}")
+    print(f"[AI Pipeline] Heatmap size: {len(response['heatmap_b64'])} bytes" if response['heatmap_b64'] else "Empty")
+    print(f"[AI Pipeline] Crop: {response['crop']}")
+    print(f"[AI Pipeline] Disease: {response['disease']}")
+    print(f"[AI Pipeline] Status: {response['status']}")
+    print(f"[AI Pipeline] Confidence: {response['confidence']}%")
+    print(f"[AI Pipeline] Severity: {response['severity']}%")
+    
+    print(f"[AI Pipeline] ✅ Prediction complete! Returning structured JSON response")
+    return response

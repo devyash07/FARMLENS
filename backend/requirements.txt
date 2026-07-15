@@ -14,3 +14,4 @@ torch
 torchvision
 anthropic
 requests
+tensorflow>=2.13.0
