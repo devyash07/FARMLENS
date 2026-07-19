@@ -1,9 +1,9 @@
 import { useNavigate } from "react-router-dom";
-import { useAuth, AnalysisRecord } from "@/contexts/AuthContext";
+import { useAuth, supabase } from "@/contexts/AuthContext";
 import { useI18n } from "@/contexts/I18nContext";
 import { useEffect, useState, useRef } from "react";
 import { motion } from "framer-motion";
-import { User, ImageIcon, Calendar, Pencil, Check, X, Camera, Lock, Phone, Mail, Hash, AlertTriangle, CheckCircle } from "lucide-react";
+import { User, ImageIcon, Calendar, Pencil, Check, X, Camera, Lock, Phone, Mail, Hash, AlertTriangle, CheckCircle, Loader2, FileText, ShieldAlert, Activity } from "lucide-react";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import { Input } from "@/components/ui/input";
@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 
 const Profile = () => {
-  const { isAuthenticated, user, history, updateProfile } = useAuth();
+  const { isAuthenticated, user, updateProfile, history: localHistory } = useAuth();
   const { t, translateCrop, translateDisease } = useI18n();
   const navigate = useNavigate();
   const avatarRef = useRef<HTMLInputElement>(null);
@@ -21,14 +21,49 @@ const Profile = () => {
   const [form, setForm] = useState({ name: "", phone: "", email: "", password: "", confirmPassword: "" });
   const [formError, setFormError] = useState("");
   const [saved, setSaved] = useState(false);
-  const [selectedImage, setSelectedImage] = useState<string | null>(null);
-  const [selectedRecord, setSelectedRecord] = useState<AnalysisRecord | null>(null);
+  
+  // New state to hold our official database history
+  const [dbHistory, setDbHistory] = useState<any[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(true);
+  const [selectedRecord, setSelectedRecord] = useState<any | null>(null);
 
-  useEffect(() => { if (!isAuthenticated) navigate("/login"); }, [isAuthenticated]);
+  useEffect(() => { 
+    if (!isAuthenticated) navigate("/login"); 
+  }, [isAuthenticated, navigate]);
 
   useEffect(() => {
     if (user) setForm({ name: user.name, phone: user.phone || "", email: user.email, password: "", confirmPassword: "" });
   }, [user]);
+
+  // Fetch real history from FastAPI & Supabase
+  useEffect(() => {
+    const fetchHistory = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.access_token) return;
+
+        const backendUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+        const res = await fetch(`${backendUrl.replace(/\/$/, '')}/history`, {
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`
+          }
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          setDbHistory(data.history || []);
+        }
+      } catch (e) {
+        console.error("[FarmLens] Failed to fetch DB history:", e);
+      } finally {
+        setLoadingHistory(false);
+      }
+    };
+
+    if (isAuthenticated) {
+      fetchHistory();
+    }
+  }, [isAuthenticated]);
 
   if (!user) return null;
 
@@ -50,6 +85,9 @@ const Profile = () => {
     setSaved(true);
     setTimeout(() => setSaved(false), 2500);
   };
+
+  // Merge DB history with local history if DB is empty during transition
+  const displayRecords = dbHistory.length > 0 ? dbHistory : localHistory;
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -149,14 +187,20 @@ const Profile = () => {
           {/* Analysis History */}
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
             <h2 className="text-xl font-display font-semibold mb-4">{t("profile.history")}</h2>
-            {history.length === 0 ? (
+            
+            {loadingHistory ? (
+              <div className="glass rounded-xl p-12 text-center flex flex-col items-center justify-center">
+                <Loader2 className="h-8 w-8 animate-spin text-primary mb-3" />
+                <p className="text-muted-foreground">Loading history...</p>
+              </div>
+            ) : displayRecords.length === 0 ? (
               <div className="glass rounded-xl p-12 text-center">
                 <ImageIcon className="h-12 w-12 mx-auto text-muted-foreground mb-3" />
                 <p className="text-muted-foreground">{t("profile.empty")}</p>
               </div>
             ) : (
               <div className="space-y-3">
-                {history.map(h => (
+                {displayRecords.map(h => (
                   <div
                     key={h.id}
                     className="glass rounded-xl p-4 flex items-center justify-between cursor-pointer hover:bg-primary/5 transition"
@@ -164,20 +208,22 @@ const Profile = () => {
                   >
                     <div className="flex items-center gap-4">
                       <div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center overflow-hidden shrink-0">
-                        {h.imagePreview
-                          ? <img src={h.imagePreview} alt={h.imageName} className="w-full h-full object-cover" />
-                          : <ImageIcon className="h-5 w-5 text-primary" />}
+                        {h.image_url || h.imagePreview ? (
+                          <img src={h.image_url || h.imagePreview} alt="crop" className="w-full h-full object-cover" />
+                        ) : (
+                          <ImageIcon className="h-5 w-5 text-primary" />
+                        )}
                       </div>
                       <div>
                         <p className="font-medium">{translateDisease(h.disease)}</p>
-                        <p className="text-xs text-muted-foreground">{h.imageName}</p>
+                        <p className="text-xs text-muted-foreground capitalize">{h.crop || "Unknown crop"}</p>
                       </div>
                     </div>
                     <div className="text-right">
                       <p className="text-sm font-medium">{t("result.severity")}: {h.severity}%</p>
                       <p className="text-xs text-muted-foreground flex items-center gap-1 justify-end">
                         <Calendar className="h-3 w-3" />
-                        {new Date(h.date).toLocaleDateString()}
+                        {new Date(h.created_at || h.date).toLocaleDateString()}
                       </p>
                     </div>
                   </div>
@@ -194,69 +240,138 @@ const Profile = () => {
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="relative bg-background rounded-2xl shadow-xl w-full max-w-2xl overflow-hidden"
+            className="relative bg-background rounded-2xl shadow-xl w-full max-w-2xl overflow-hidden max-h-[90vh] flex flex-col md:flex-row"
             onClick={e => e.stopPropagation()}
           >
             {/* Close */}
-            <button onClick={() => setSelectedRecord(null)} className="absolute top-4 right-4 z-10 p-1.5 rounded-full bg-secondary hover:bg-secondary/80 transition">
+            <button onClick={() => setSelectedRecord(null)} className="absolute top-4 right-4 z-10 p-1.5 rounded-full bg-secondary/80 hover:bg-secondary transition backdrop-blur-sm">
               <X className="h-4 w-4" />
             </button>
 
-            <div className="grid md:grid-cols-2">
-              {/* Image */}
-              <div className="relative bg-muted min-h-[260px] flex items-center justify-center">
-                {selectedRecord.imagePreview
-                  ? <img src={selectedRecord.imagePreview} alt={selectedRecord.imageName} className="w-full h-full object-cover" />
-                  : <ImageIcon className="h-16 w-16 text-muted-foreground" />
+            {/* Images Column */}
+            <div className="relative bg-muted/40 md:w-1/2 flex flex-col p-4 gap-4 overflow-y-auto border-b md:border-b-0 md:border-r border-border">
+              {selectedRecord.image_url || selectedRecord.imagePreview ? (
+                <div className="w-full space-y-4 my-auto">
+                  <div className="relative rounded-lg overflow-hidden border border-border shadow-sm">
+                    <img src={selectedRecord.image_url || selectedRecord.imagePreview} alt="Original" className="w-full h-auto object-cover" />
+                    <div className="absolute top-2 left-2 bg-black/70 text-white text-[10px] px-2 py-1 rounded font-medium">
+                      📷 Original
+                    </div>
+                  </div>
+                  
+                  {selectedRecord.heatmap_url && (
+                    <div className="relative rounded-lg overflow-hidden border border-primary/40 shadow-sm">
+                      <img src={selectedRecord.heatmap_url} alt="Heatmap" className="w-full h-auto object-cover" />
+                      <div className="absolute top-2 left-2 bg-primary/90 text-primary-foreground text-[10px] px-2 py-1 rounded font-medium">
+                        🔥 Heatmap
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="h-48 md:h-full flex items-center justify-center">
+                  <ImageIcon className="h-16 w-16 text-muted-foreground/50" />
+                </div>
+              )}
+            </div>
+
+            {/* Result Details Column */}
+            <div className="p-6 space-y-6 md:w-1/2 overflow-y-auto">
+              <div className="flex items-start gap-3">
+                {selectedRecord.severity === 0
+                  ? <CheckCircle className="h-8 w-8 text-green-500 shrink-0 mt-1" />
+                  : <AlertTriangle className="h-8 w-8 text-destructive shrink-0 mt-1" />
                 }
-                {selectedRecord.severity > 0 && (
-                  <div className="absolute inset-0 bg-gradient-to-br from-destructive/20 via-transparent to-primary/20 mix-blend-multiply" />
-                )}
+                <div>
+                  {selectedRecord.crop && (
+                    <>
+                      <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-semibold">{t("result.crop_label")}</p>
+                      <p className="font-semibold text-base mb-2 capitalize">{translateCrop(selectedRecord.crop)}</p>
+                    </>
+                  )}
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-semibold">{t("result.disease_label")}</p>
+                  <h2 className="text-2xl font-display font-bold leading-tight">{translateDisease(selectedRecord.disease)}</h2>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    {selectedRecord.severity === 0 ? "Crop appears healthy" : t("result.disease_detected")}
+                  </p>
+                </div>
               </div>
 
-              {/* Result details */}
-              <div className="p-6 space-y-5">
-                <div className="flex items-start gap-3">
-                  {selectedRecord.severity === 0
-                    ? <CheckCircle className="h-7 w-7 text-primary shrink-0 mt-0.5" />
-                    : <AlertTriangle className="h-7 w-7 text-destructive shrink-0 mt-0.5" />
-                  }
-                  <div>
-                    {selectedRecord.crop && (
-                      <>
-                        <p className="text-[10px] text-muted-foreground uppercase tracking-wide">{t("result.crop_label")}</p>
-                        <p className="font-semibold text-base">{translateCrop(selectedRecord.crop)}</p>
-                      </>
-                    )}
-                    <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-1">{t("result.disease_label")}</p>
-                    <h2 className="text-xl font-display font-bold">{translateDisease(selectedRecord.disease)}</h2>
-                    <p className="text-xs text-muted-foreground">
-                      {selectedRecord.severity === 0 ? t("result.crop_healthy") : t("result.disease_detected")}
-                    </p>
+              <div className="space-y-4 pt-2">
+                <div>
+                  <div className="flex justify-between text-sm mb-1.5">
+                    <span className="text-muted-foreground font-medium">{t("result.severity")}</span>
+                    <span className="font-bold">{selectedRecord.severity}%</span>
                   </div>
+                  <Progress value={selectedRecord.severity} className="h-2" />
                 </div>
+                <div>
+                  <div className="flex justify-between text-sm mb-1.5">
+                    <span className="text-muted-foreground font-medium">{t("result.confidence")}</span>
+                    <span className="font-bold">{selectedRecord.confidence}%</span>
+                  </div>
+                  <Progress value={selectedRecord.confidence} className="h-2 bg-blue-100" />
+                </div>
+              </div>
 
-                <div className="space-y-3">
-                  <div>
-                    <div className="flex justify-between text-sm mb-1">
-                      <span className="text-muted-foreground">{t("result.severity")}</span>
-                      <span className="font-semibold">{selectedRecord.severity}%</span>
+              {/* Treatment & Precautions (Only show if disease is present) */}
+              {selectedRecord.severity > 0 && (
+                <div className="space-y-4 pt-4 border-t border-border">
+                  
+                  {/* Treatment */}
+                  {selectedRecord.treatment && selectedRecord.treatment.length > 0 && (
+                    <div className="space-y-2">
+                      <h4 className="flex items-center gap-2 text-sm font-semibold text-green-700 dark:text-green-400">
+                        <FileText className="h-4 w-4" /> Personalized Treatment
+                      </h4>
+                      <div className="bg-green-50/50 dark:bg-green-950/20 p-3 rounded-lg border border-green-200/50 dark:border-green-800/50">
+                        <p className="text-xs text-foreground/90 leading-relaxed">
+                          {Array.isArray(selectedRecord.treatment) ? selectedRecord.treatment.join(" ") : selectedRecord.treatment}
+                        </p>
+                      </div>
                     </div>
-                    <Progress value={selectedRecord.severity} className="h-2" />
-                  </div>
-                  <div>
-                    <div className="flex justify-between text-sm mb-1">
-                      <span className="text-muted-foreground">{t("result.confidence")}</span>
-                      <span className="font-semibold">{selectedRecord.confidence}%</span>
-                    </div>
-                    <Progress value={selectedRecord.confidence} className="h-2" />
-                  </div>
-                </div>
+                  )}
 
-                <div className="text-xs text-muted-foreground space-y-1 pt-1 border-t border-border">
-                  <p className="flex items-center gap-1.5"><ImageIcon className="h-3 w-3" /> {selectedRecord.imageName}</p>
-                  <p className="flex items-center gap-1.5"><Calendar className="h-3 w-3" /> {new Date(selectedRecord.date).toLocaleString()}</p>
+                  {/* Precautions / Prevention */}
+                  {selectedRecord.prevention && selectedRecord.prevention.length > 0 && (
+                    <div className="space-y-2">
+                      <h4 className="flex items-center gap-2 text-sm font-semibold text-orange-700 dark:text-orange-400">
+                        <ShieldAlert className="h-4 w-4" /> Precautions
+                      </h4>
+                      <div className="bg-orange-50/50 dark:bg-orange-950/20 p-3 rounded-lg border border-orange-200/50 dark:border-orange-800/50">
+                        <p className="text-xs text-foreground/90 leading-relaxed">
+                          {Array.isArray(selectedRecord.prevention) ? selectedRecord.prevention.join(" ") : selectedRecord.prevention}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Symptoms */}
+                  {selectedRecord.symptoms && selectedRecord.symptoms.length > 0 && (
+                    <div className="space-y-2">
+                      <h4 className="flex items-center gap-2 text-sm font-semibold text-blue-700 dark:text-blue-400">
+                        <Activity className="h-4 w-4" /> Symptoms to Watch
+                      </h4>
+                      <ul className="list-disc list-inside text-xs text-muted-foreground ml-1 space-y-1">
+                        {(Array.isArray(selectedRecord.symptoms) ? selectedRecord.symptoms : [selectedRecord.symptoms]).map((s: string, i: number) => (
+                          <li key={i}>{s}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
                 </div>
+              )}
+
+              <div className="text-xs text-muted-foreground space-y-2 pt-4 border-t border-border">
+                <p className="flex items-center gap-2">
+                  <ImageIcon className="h-4 w-4" /> 
+                  <span className="break-all">{selectedRecord.imageName || "database_record.jpg"}</span>
+                </p>
+                <p className="flex items-center gap-2">
+                  <Calendar className="h-4 w-4" /> 
+                  {new Date(selectedRecord.created_at || selectedRecord.date).toLocaleString()}
+                </p>
               </div>
             </div>
           </motion.div>

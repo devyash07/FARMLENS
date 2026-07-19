@@ -4,9 +4,31 @@ import base64
 import json
 from typing import Optional
 import numpy as np
+import urllib.request
+import urllib.parse
 
 # Import new Grad-CAM++ module
 from services.gradcam_plus import generate_heatmap_b64 as generate_gradcam_heatmap
+
+
+# --- Zero Dependency Translator ---
+def translate_content(text, target_lang):
+    if not text or target_lang == "en":
+        return text
+    try:
+        if isinstance(text, list):
+            return [translate_content(item, target_lang) for item in text]
+            
+        url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl={target_lang}&dt=t&q={urllib.parse.quote(str(text))}"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=5) as response:
+            data = json.loads(response.read().decode())
+            return "".join([sentence[0] for sentence in data[0] if sentence[0]])
+    except Exception as e:
+        print(f"[Translator] Failed to translate: {e}")
+        return text
+# ----------------------------------
+
 
 # ---------------------------------------------------------------------------
 # Local ML Models (runs without API calls)
@@ -794,7 +816,7 @@ def _claude_predict(image_bytes: bytes, language: str = "en") -> dict:
         language_instruction = f"""
 
 CRITICAL LANGUAGE REQUIREMENT:
-- The 'treatment' field MUST be written ENTIRELY in {target_language} language
+- The 'treatment' and 'explanation' fields MUST be written ENTIRELY in {target_language} language
 - Keep fungicide/pesticide names in English but translate all other text
 """
     
@@ -834,7 +856,6 @@ TREATMENT REQUIREMENTS:
 - Include application rates and frequency
 - Include cultural practices (pruning, spacing, watering)
 - Include prevention measures for future
-- Example: "Apply Mancozeb 75% WP at 2g/liter every 10-14 days. Remove and destroy all infected leaves and plant debris. Improve air circulation by proper spacing and pruning. For prevention: avoid overhead irrigation, apply preventive fungicide sprays during humid weather, and practice crop rotation."
 """
 
     message = client.messages.create(
@@ -922,7 +943,7 @@ def _gemini_predict(image_bytes: bytes, language: str = "en") -> dict:
     
     language_instruction = ""
     if language != "en":
-        language_instruction = f"\n\nCRITICAL: The 'treatment' field MUST be in {target_language}. Keep fungicide names in English but translate all other text."
+        language_instruction = f"\n\nCRITICAL: The 'treatment' and 'explanation' fields MUST be in {target_language}. Keep fungicide names in English but translate all other text."
     
     prompt = f"""You are an expert agricultural plant pathologist and botanist AI.
 
@@ -946,11 +967,10 @@ CROP IDENTIFICATION:
 - Tomato: Compound serrated leaves
 - Be VERY specific about the disease{language_instruction}"""
     
-    # Try multiple Gemini models in order of preference (updated model names for 2025)
     models_to_try = [
-        "gemini-flash-latest",      # Latest flash model (fast and reliable)
-        "gemini-2.5-flash",         # Gemini 2.5 Flash (good balance)
-        "gemini-pro-latest",        # Latest pro model (most capable)
+        "gemini-flash-latest",
+        "gemini-2.5-flash",
+        "gemini-pro-latest",
     ]
     
     for model_name in models_to_try:
@@ -1014,7 +1034,6 @@ CROP IDENTIFICATION:
             else:
                 error_msg = response.text
                 print(f"[Gemini] {model_name} error {response.status_code}: {error_msg[:200]}")
-                # Try next model
                 continue
                 
         except requests.exceptions.Timeout:
@@ -1026,198 +1045,18 @@ CROP IDENTIFICATION:
     
     # If all models failed, raise exception
     raise Exception("All Gemini models failed or unavailable")
-    
-    text = response.text.strip()
-    if text.startswith("```"):
-        text = text.split("```")[1]
-        if text.startswith("json"):
-            text = text[4:]
-    text = text.strip()
 
-    data = json.loads(text)
-    disease = data.get("disease", "Unknown")
-    return {
-        "crop":        data.get("crop", "Unknown"),
-        "disease":     disease,
-        "severity":    int(data.get("severity", 50)),
-        "confidence":  int(data.get("confidence", 80)),
-        "status":      "Healthy" if disease.lower() == "healthy" else "Infected",
-        "explanation": data.get("explanation", ""),
-        "treatment":   data.get("treatment", ""),
-    }
-
-
-
-    """
-    Uses HuggingFace Inference API with a free token.
-    Requires HF_TOKEN in .env (free at huggingface.co/settings/tokens)
-    """
-    import urllib.request, ssl
-
-    hf_token = os.environ.get("HF_TOKEN", "")
-    if not hf_token:
-        raise ValueError("No HF_TOKEN set")
-
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
-
-    # PlantVillage-trained model via HF Inference API
-    url = "https://api-inference.huggingface.co/models/Diginsa/Plant-Disease-Detection-Project"
-    req = urllib.request.Request(url, data=image_bytes, method="POST")
-    req.add_header("Content-Type", "application/octet-stream")
-    req.add_header("Authorization", f"Bearer {hf_token}")
-
-    with urllib.request.urlopen(req, timeout=30, context=ctx) as resp:
-        results = json.loads(resp.read())
-
-    if not results or not isinstance(results, list):
-        raise ValueError(f"Bad response: {results}")
-
-    top = results[0]
-    label = top.get("label", "Unknown___Unknown")
-    score = float(top.get("score", 0.8))
-
-    # Parse "Crop___Disease" format
-    if "___" in label:
-        parts = label.split("___")
-        crop = parts[0].replace("_", " ").strip()
-        disease = parts[1].replace("_", " ").strip()
-    else:
-        crop, disease = "Plant", label.replace("_", " ").strip()
-
-    is_healthy = "healthy" in disease.lower()
-    if is_healthy:
-        disease = "Healthy"
-
-    # Higher confidence in disease = higher severity
-    severity = 0 if is_healthy else max(40, min(95, int(score * 80 + 20)))
-    confidence = min(99, int(score * 100))
-
-    treatments = {
-        "scab": "Apply fungicides containing captan (2.5g/L) or myclobutanil (0.5ml/L) at bud break and repeat every 10-14 days. Remove and destroy all infected leaves and fallen fruit. Prune trees to improve air circulation and reduce humidity. For prevention: rake and destroy fallen leaves in autumn, apply dormant oil sprays in early spring, and maintain proper tree spacing.",
-        "black rot": "Prune and destroy all infected branches, cutting 15cm below visible symptoms. Apply copper-based fungicides (2g/L) or Mancozeb 75% WP (2.5g/L) every 7-10 days. Remove all mummified fruits from tree and ground. For prevention: maintain good sanitation, ensure proper drainage, apply preventive fungicide during wet periods, and avoid overhead irrigation.",
-        "rust": "Apply systemic fungicides like myclobutanil (0.5ml/L) or propiconazole (1ml/L) in early spring and repeat every 14 days. Remove alternate host plants (junipers) within 300m if possible. Improve air circulation through proper pruning. For prevention: plant resistant varieties, avoid overhead watering, apply preventive sprays before rust season, and maintain tree vigor through proper fertilization.",
-        "blight": "Apply copper fungicides (2-3g/L) or chlorothalonil (2ml/L) immediately and repeat every 5-7 days during wet weather. Remove and destroy all infected leaves and stems. Avoid overhead watering and water only at soil level. For prevention: space plants 60-90cm apart, apply mulch to prevent soil splash, rotate crops annually, and use disease-free seeds or transplants.",
-        "mildew": "Apply sulfur dust (3g/L) or potassium bicarbonate (5g/L) weekly until symptoms disappear. Improve ventilation by thinning dense foliage and proper spacing. Reduce humidity by watering in morning hours only. For prevention: plant resistant varieties, ensure 45-60cm spacing between plants, avoid late-day watering, prune regularly for air flow, and apply preventive sulfur sprays in humid conditions.",
-        "spot": "Apply chlorothalonil (2ml/L) or Mancozeb 75% WP (2.5g/L) every 7-10 days for 3-4 applications. Remove and destroy all infected foliage immediately. Rotate to non-host crops for 2-3 years. For prevention: use certified disease-free seeds, avoid working with plants when wet, maintain field sanitation by removing plant debris, and apply preventive fungicide before disease appears.",
-        "rot": "Improve soil drainage immediately by creating raised beds or installing drainage tiles. Apply fungicides like metalaxyl (1g/L) or fosetyl-al (2.5g/L) as soil drench. Remove and destroy all infected plant material. For prevention: avoid overwatering (water only when top 5cm soil is dry), ensure proper soil drainage with organic matter, use raised beds in heavy soils, and rotate crops to non-susceptible species.",
-        "mold": "Improve ventilation by increasing plant spacing to 45-60cm and pruning dense growth. Apply fungicides like iprodione (1.5ml/L) or fenhexamid (1ml/L) every 7-10 days. Reduce humidity by using fans in greenhouses or avoiding overcrowding. For prevention: increase air circulation, avoid overcrowding plants, water in morning hours only, remove dead plant material promptly, and maintain relative humidity below 85%.",
-        "healthy": "Maintain regular watering schedule (2-3cm per week) and balanced fertilization (NPK 10-10-10 monthly). Monitor plants weekly for early signs of disease or pest damage. For prevention: practice crop rotation annually, maintain soil health with compost, inspect plants regularly for symptoms, remove weeds that harbor pests, and apply preventive treatments during disease-prone seasons.",
-    }
-    treatment = next(
-        (v for k, v in treatments.items() if k in disease.lower()),
-        "Apply appropriate broad-spectrum fungicide (e.g., Mancozeb 75% WP at 2.5g/L or Copper oxychloride at 3g/L) every 7-10 days. Remove and destroy all infected plant material immediately. Improve cultural practices including proper spacing, drainage, and sanitation. For prevention: practice good field hygiene, ensure adequate plant spacing for air circulation, monitor regularly for early symptoms, and apply preventive fungicide sprays during favorable disease conditions."
-    )
-
-    return {
-        "crop": crop,
-        "disease": disease,
-        "severity": severity,
-        "confidence": confidence,
-        "status": "Healthy" if is_healthy else "Infected",
-        "explanation": f"Detected {disease} in {crop} with {confidence}% confidence.",
-        "treatment": treatment,
-    }
-
-    with urllib.request.urlopen(req, timeout=30, context=ctx) as resp:
-        results = json.loads(resp.read())
-
-    if not results or not isinstance(results, list):
-        raise ValueError(f"Unexpected response: {results}")
-
-    # Top prediction
-    top = results[0]
-    label = top.get("label", "Unknown___Unknown")
-    score = float(top.get("score", 0.8))
-
-    # PlantVillage labels are "Crop___Disease" format
-    parts = label.replace("_", " ").split("   ")  # triple space separator
-    if len(parts) == 2:
-        crop, disease = parts[0].strip(), parts[1].strip()
-    elif "___" in top.get("label", ""):
-        raw_parts = top["label"].split("___")
-        crop = raw_parts[0].replace("_", " ").strip()
-        disease = raw_parts[1].replace("_", " ").strip()
-    else:
-        crop = "Unknown"
-        disease = label
-
-    is_healthy = "healthy" in disease.lower()
-    if is_healthy:
-        disease = "Healthy"
-
-    # Higher confidence in disease detection = higher severity
-    severity = 0 if is_healthy else max(40, min(95, int(score * 80 + 20)))
-    confidence = int(score * 100)
-
-    # Treatment lookup
-    treatments = {
-        "Apple Scab": "Apply fungicides (captan or myclobutanil) at bud break. Remove infected leaves. Ensure good air circulation.",
-        "Apple Black Rot": "Prune infected branches. Apply copper-based fungicides. Remove mummified fruits.",
-        "Cedar Apple Rust": "Apply fungicides (myclobutanil) in spring. Remove nearby cedar trees if possible.",
-        "Corn Common Rust": "Apply fungicides (azoxystrobin). Plant resistant varieties. Rotate crops.",
-        "Corn Northern Leaf Blight": "Apply fungicides at early infection. Use resistant hybrids. Rotate crops.",
-        "Grape Black Rot": "Apply fungicides (mancozeb or myclobutanil). Remove infected berries. Prune for air flow.",
-        "Tomato Early Blight": "Apply copper fungicides. Remove lower infected leaves. Avoid overhead watering.",
-        "Tomato Late Blight": "Apply chlorothalonil or copper fungicides immediately. Remove infected plants.",
-        "Tomato Leaf Mold": "Improve ventilation. Apply fungicides (chlorothalonil). Reduce humidity.",
-        "Potato Early Blight": "Apply mancozeb or chlorothalonil. Remove infected foliage. Rotate crops.",
-        "Potato Late Blight": "Apply metalaxyl fungicides. Destroy infected plants. Avoid wet conditions.",
-        "Healthy": "Maintain regular watering and fertilization. Monitor for early signs of disease. Ensure proper spacing for air circulation.",
-    }
-    treatment = next((v for k, v in treatments.items() if k.lower() in disease.lower()), 
-                     "Apply appropriate fungicide for the detected disease. Consult local agricultural extension for specific treatment. Remove infected plant material and improve air circulation.")
-
-    return {
-        "crop":        crop,
-        "disease":     disease,
-        "severity":    severity,
-        "confidence":  confidence,
-        "status":      "Healthy" if is_healthy else "Infected",
-        "explanation": f"Detected {disease} in {crop} with {confidence}% confidence.",
-        "treatment":   treatment,
-    }
-
-    # Strip markdown code fences if present
-    if text.startswith("```"):
-        text = text.split("```")[1]
-        if text.startswith("json"):
-            text = text[4:]
-    text = text.strip()
-
-    data = json.loads(text)
-    disease = data.get("disease", "Unknown")
-    severity = int(data.get("severity", 50))
-    confidence = int(data.get("confidence", 80))
-    crop = data.get("crop", "Unknown")
-    explanation = data.get("explanation", "")
-    treatment = data.get("treatment", "")
-
-    return {
-        "crop": crop,
-        "disease": disease,
-        "severity": severity,
-        "confidence": confidence,
-        "status": "Healthy" if disease.lower() == "healthy" else "Infected",
-        "explanation": explanation,
-        "treatment": treatment,
-    }
-
-
-# ---------------------------------------------------------------------------
-# Deterministic mock (same image bytes → same result, always)
-# ---------------------------------------------------------------------------
-MOCK_DISEASES = [
-    {"crop": "Tomato",  "disease": "Leaf Blight",    "severity": 65, "confidence": 92},
-    {"crop": "Wheat",   "disease": "Powdery Mildew", "severity": 45, "confidence": 88},
-    {"crop": "Maize",   "disease": "Root Rot",        "severity": 80, "confidence": 95},
-    {"crop": "Potato",  "disease": "Bacterial Spot",  "severity": 55, "confidence": 85},
-    {"crop": "Rice",    "disease": "Healthy",          "severity": 0,  "confidence": 97},
-]
 
 def _mock_predict(image_bytes: bytes) -> dict:
     # Hash the image bytes so the same image always maps to the same result
+    MOCK_DISEASES = [
+        {"crop": "Tomato",  "disease": "Leaf Blight",    "severity": 65, "confidence": 92},
+        {"crop": "Wheat",   "disease": "Powdery Mildew", "severity": 45, "confidence": 88},
+        {"crop": "Maize",   "disease": "Root Rot",       "severity": 80, "confidence": 95},
+        {"crop": "Potato",  "disease": "Bacterial Spot", "severity": 55, "confidence": 85},
+        {"crop": "Rice",    "disease": "Healthy",        "severity": 0,  "confidence": 97},
+    ]
+
     digest = hashlib.md5(image_bytes).hexdigest()
     index = int(digest[:8], 16) % len(MOCK_DISEASES)
     r = MOCK_DISEASES[index]
@@ -1234,99 +1073,11 @@ def _mock_predict(image_bytes: bytes) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-# OLD GRAD-CAM IMPLEMENTATION - REPLACED BY Grad-CAM++ (gradcam_plus.py)
-# ---------------------------------------------------------------------------
-# The following functions are deprecated and no longer used.
-# Kept here for reference only.
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
-# End of deprecated code
-# ---------------------------------------------------------------------------
-    """
-    Generate Grad-CAM heatmap using the actual ML model's activations.
-    Returns the raw heatmap array for further processing.
-    """
-    try:
-        import tensorflow as tf
-        
-        # Get the last convolutional layer
-        last_conv_layer = None
-        for layer in reversed(model.layers):
-            if len(layer.output_shape) == 4:  # Convolutional layer
-                last_conv_layer = layer
-                break
-        
-        if last_conv_layer is None:
-            print("[Grad-CAM] No convolutional layer found")
-            return None
-        
-        print(f"[Grad-CAM] Using layer: {last_conv_layer.name}")
-        
-        # Create a model that maps the input image to the activations of the last conv layer
-        grad_model = tf.keras.models.Model(
-            [model.inputs],
-            [last_conv_layer.output, model.output]
-        )
-        
-        # Compute gradient of the predicted class with respect to the feature map
-        with tf.GradientTape() as tape:
-            conv_outputs, predictions = grad_model(img_array)
-            loss = predictions[:, class_idx]
-        
-        # Extract gradients
-        grads = tape.gradient(loss, conv_outputs)
-        
-        # Pool the gradients over all the axes leaving out the channel dimension
-        pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
-        
-        # Weight the channels by the gradients
-        conv_outputs = conv_outputs[0]
-        pooled_grads = pooled_grads.numpy()
-        conv_outputs = conv_outputs.numpy()
-        
-        for i in range(pooled_grads.shape[0]):
-            conv_outputs[:, :, i] *= pooled_grads[i]
-        
-        # Average over all the filters to get a single 2D heatmap
-        heatmap = np.mean(conv_outputs, axis=-1)
-        
-        # Normalize between 0 and 1
-        heatmap = np.maximum(heatmap, 0)
-        if np.max(heatmap) != 0:
-            heatmap /= np.max(heatmap)
-        
-        return heatmap
-        
-    except Exception as e:
-        print(f"[Grad-CAM] Failed to generate: {e}")
-        return None
-
-
-# ---------------------------------------------------------------------------
 # Public entry point with enhanced structured output
 # ---------------------------------------------------------------------------
 def predict(image_bytes: Optional[bytes] = None, language: str = "en") -> dict:
     """
-    Main prediction pipeline that returns structured JSON containing:
-    - crop: Detected crop name
-    - disease: Detected disease name  
-    - severity: Disease severity (0-100)
-    - confidence: Model confidence (0-100)
-    - status: "Healthy" or "Infected"
-    - image_url: URL or identifier of the uploaded image
-    - heatmap_url: URL of the heatmap (if applicable)
-    - heatmap_b64: Base64-encoded heatmap image
-    - explanation: Brief explanation of the diagnosis
-    - treatment: Personalized treatment recommendations
-    - precautions: Prevention and precautionary measures
-    
-    Prediction Priority:
-    1. Custom ML Model (EfficientNet with 66 disease classes) - PRIMARY
-    2. Claude AI (backup)
-    3. Color-based analysis (fallback)
-    4. Mock prediction (final fallback)
+    Main prediction pipeline that returns structured JSON
     """
     if not image_bytes:
         return {
@@ -1345,7 +1096,6 @@ def predict(image_bytes: Optional[bytes] = None, language: str = "en") -> dict:
 
     print(f"[AI Pipeline] Starting prediction with language: {language}")
 
-    # PREDICTION PRIORITY: Custom ML Model (66 classes) > Claude > Color-based > Mock
     result = None
     method_used = "unknown"
     
@@ -1355,13 +1105,6 @@ def predict(image_bytes: Optional[bytes] = None, language: str = "en") -> dict:
         result = _torch_predict(image_bytes)
         method_used = "Fine-tuned EfficientNet Model"
         print(f"[AI Pipeline] ✅ ML Model success: {result['crop']} / {result['disease']} ({result['confidence']}% confidence)")
-        
-        # Quality check: If prediction seems suspicious, log a warning
-        # (e.g., very high confidence on disease might be misclassification)
-        if result['confidence'] > 95 and result['disease'] != 'Healthy':
-            print(f"[AI Pipeline] ⚠️ WARNING: Very high confidence ({result['confidence']}%) on disease detection.")
-            print(f"[AI Pipeline] ⚠️ This might be a misclassification. Review the uploaded image.")
-            print(f"[AI Pipeline] ℹ️ If incorrect, consider using Claude AI backup by setting ANTHROPIC_API_KEY")
         
     except Exception as e:
         print(f"[AI Pipeline] ❌ ML Model failed: {e}")
@@ -1377,88 +1120,68 @@ def predict(image_bytes: Optional[bytes] = None, language: str = "en") -> dict:
             print(f"[AI Pipeline] ✅ Claude success: {result['crop']} / {result['disease']} ({result['confidence']}% confidence)")
         except Exception as e:
             print(f"[AI Pipeline] ❌ Claude failed: {e}")
-            if "credit balance" in str(e).lower():
-                print("[AI Pipeline] ⚠️ Claude needs credits. Add $5 at https://console.anthropic.com/settings/billing")
     
-    # 3. Try color-based analysis as last resort
+    # 3. Try Gemini as backup
+    if not result and os.environ.get("GEMINI_API_KEY"):
+        try:
+            print("[AI Pipeline] ✓ Step 3: Using Gemini as backup...")
+            result = _gemini_predict(image_bytes, language=language)
+            method_used = "Gemini AI"
+            print(f"[AI Pipeline] ✅ Gemini success: {result['crop']} / {result['disease']} ({result['confidence']}% confidence)")
+        except Exception as e:
+            print(f"[AI Pipeline] ❌ Gemini failed: {e}")
+
+    # 4. Try color-based analysis as last resort
     if not result:
         try:
-            print("[AI Pipeline] ✓ Step 3: Using color-based analysis (fallback)...")
+            print("[AI Pipeline] ✓ Step 4: Using color-based analysis (fallback)...")
             result = _color_based_predict(image_bytes)
             method_used = "Color Analysis"
             print(f"[AI Pipeline] ✅ Color analysis success: {result['crop']} / {result['disease']} ({result['confidence']}% confidence)")
         except Exception as e:
             print(f"[AI Pipeline] ❌ Color analysis failed: {e}")
     
-    # 4. Final fallback to mock
+    # 5. Final fallback to mock
     if not result:
         print("[AI Pipeline] ⚠️ All methods failed, using mock prediction")
         result = _mock_predict(image_bytes)
         method_used = "Mock (Fallback)"
 
-    # Enhance result with additional fields
-    print(f"[AI Pipeline] 📊 Final result from {method_used}")
-    print(f"[AI Pipeline] - Crop: {result['crop']}")
-    print(f"[AI Pipeline] - Disease: {result['disease']}")
-    print(f"[AI Pipeline] - Severity: {result['severity']}%")
-    print(f"[AI Pipeline] - Confidence: {result['confidence']}%")
-    
     # Extract precautions from disease info
     disease_info = _load_disease_info()
     precautions = []
-    disease_key = ""  # Track the matched disease key
+    disease_key = "" 
     
-    # Try to find precautions in disease knowledge base
     for key, info in disease_info.items():
         if (result['disease'].lower() in key.lower() or 
             result['disease'].lower() in info.get('disease', '').lower()):
             precautions = info.get('prevention', [])
-            disease_key = key  # Store the matched disease key
-            if precautions:
-                print(f"[AI Pipeline] ✓ Found {len(precautions)} precautions from knowledge base")
-                print(f"[AI Pipeline] ✓ Disease key: {disease_key}")
-                break
+            disease_key = key 
+            break
     
-    # Default precautions if none found
     if not precautions:
         if result['status'] == "Healthy":
             precautions = [
                 "Continue regular monitoring for early disease detection",
                 "Maintain proper irrigation and avoid water stress",
-                "Apply balanced fertilizers according to crop needs",
-                "Practice crop rotation to prevent soil-borne diseases",
-                "Remove weeds regularly to reduce pest harboring"
+                "Practice crop rotation to prevent soil-borne diseases"
             ]
         else:
             precautions = [
                 "Monitor plants daily for spreading of disease",
                 "Isolate infected plants to prevent disease spread",
-                "Avoid working with plants when leaves are wet",
-                "Sterilize pruning tools between plants",
-                "Remove and destroy infected plant debris immediately",
-                "Practice crop rotation for at least 2-3 years"
+                "Remove and destroy infected plant debris immediately"
             ]
     
     # Generate Grad-CAM++ heatmap for infected plants
     heatmap_b64 = ""
     if result["status"] == "Infected" and result["severity"] > 0:
-        print(f"[AI Pipeline] === GRAD-CAM HEATMAP GENERATION ===")
-        print(f"[AI Pipeline] Status: {result['status']}, Severity: {result['severity']}")
-        
-        # Extract Grad-CAM++ metadata if available
         model = result.get("_gradcam_model")
         img_array = result.get("_gradcam_img_array")
         class_idx = result.get("_gradcam_class_idx", 0)
         
-        print(f"[AI Pipeline] Metadata check:")
-        print(f"  - Model: {model is not None} (type: {type(model).__name__ if model else 'None'})")
-        print(f"  - Image array: {img_array is not None} (shape: {img_array.shape if img_array is not None else 'None'})")
-        print(f"  - Class index: {class_idx}")
-        
         if model is not None and img_array is not None:
             try:
-                print(f"[AI Pipeline] Calling generate_gradcam_heatmap...")
-                # Generate heatmap using new Grad-CAM++ implementation
                 heatmap_b64 = generate_gradcam_heatmap(
                     image_bytes, 
                     result["severity"],
@@ -1469,28 +1192,9 @@ def predict(image_bytes: Optional[bytes] = None, language: str = "en") -> dict:
                     img_array=img_array,
                     class_idx=class_idx
                 )
-                print("\n========== HEATMAP DEBUG ==========")
-                print("Heatmap generated:", heatmap_b64 is not None)
-                print("Heatmap length:", len(heatmap_b64) if heatmap_b64 else 0)
-                print("==================================\n")
-                
-                if heatmap_b64:
-                    print(f"[AI Pipeline] ✅ Heatmap SUCCESS - Size: {len(heatmap_b64)} bytes")
-                else:
-                    print(f"[AI Pipeline] ⚠️ Heatmap EMPTY STRING returned")
             except Exception as e:
                 print(f"[AI Pipeline] ❌ Heatmap EXCEPTION: {e}")
-                import traceback
-                traceback.print_exc()
                 heatmap_b64 = ""
-        else:
-            print(f"[AI Pipeline] ⚠️ SKIPPING HEATMAP - Missing metadata")
-            if model is None:
-                print(f"  - Model is None (not stored from TensorFlow inference)")
-            if img_array is None:
-                print(f"  - Image array is None (not stored from TensorFlow inference)")
-    else:
-        print(f"[AI Pipeline] Skipping heatmap (Status: {result['status']}, Severity: {result['severity']}))")
     
     # Clean up metadata from result (don't send to API response)
     result.pop("_gradcam_model", None)
@@ -1501,28 +1205,28 @@ def predict(image_bytes: Optional[bytes] = None, language: str = "en") -> dict:
     response = {
         "crop": result.get("crop", "Unknown"),
         "disease": result.get("disease", "Unknown"),
-        "disease_key": disease_key,  # Include the database key for disease info lookup
+        "disease_key": disease_key,
         "severity": result.get("severity", 0),
         "confidence": result.get("confidence", 0),
         "status": result.get("status", "Unknown"),
-        "image_url": "",  # Will be set by the route handler
-        "heatmap_url": "",  # Will be set if uploaded to storage
+        "image_url": "", 
+        "heatmap_url": "", 
         "heatmap_b64": heatmap_b64,
         "explanation": result.get("explanation", "Analysis completed using AI vision models."),
         "treatment": result.get("treatment", "Consult local agricultural extension for specific treatment recommendations."),
-        "precautions": " ".join(precautions) if isinstance(precautions, list) else precautions
+        "precautions": precautions
     }
-    
-    # DEBUG: Verify response structure
-    print(f"[AI Pipeline] === API RESPONSE ===")
-    print(f"[AI Pipeline] Response keys: {list(response.keys())}")
-    print(f"[AI Pipeline] Heatmap included: {bool(response['heatmap_b64'])}")
-    print(f"[AI Pipeline] Heatmap size: {len(response['heatmap_b64'])} bytes" if response['heatmap_b64'] else "Empty")
-    print(f"[AI Pipeline] Crop: {response['crop']}")
-    print(f"[AI Pipeline] Disease: {response['disease']}")
-    print(f"[AI Pipeline] Status: {response['status']}")
-    print(f"[AI Pipeline] Confidence: {response['confidence']}%")
-    print(f"[AI Pipeline] Severity: {response['severity']}%")
-    
+
+    # ZERO-DEPENDENCY AUTO-TRANSLATION (If hitting Local ML or Color Method)
+    if language != "en" and method_used not in ["Claude AI", "Gemini AI"]:
+        print(f"[AI Pipeline] Translating local model results to {language}...")
+        response["explanation"] = translate_content(response["explanation"], language)
+        response["treatment"] = translate_content(response["treatment"], language)
+        response["precautions"] = translate_content(response["precautions"], language)
+
+    # Ensure precautions is a single string at the end to match frontend expectations
+    if isinstance(response["precautions"], list):
+        response["precautions"] = " ".join(response["precautions"])
+
     print(f"[AI Pipeline] ✅ Prediction complete! Returning structured JSON response")
     return response

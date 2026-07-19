@@ -1,5 +1,5 @@
 import { useNavigate } from "react-router-dom";
-import { useAuth } from "@/contexts/AuthContext";
+import { useAuth, supabase } from "@/contexts/AuthContext";
 import { useI18n } from "@/contexts/I18nContext";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -46,9 +46,9 @@ interface AnalysisItem {
 const MOCK = [
   { crop: "Tomato",  disease: "Leaf Blight",    severity: 65, confidence: 92 },
   { crop: "Wheat",   disease: "Powdery Mildew", severity: 45, confidence: 88 },
-  { crop: "Maize",   disease: "Root Rot",        severity: 80, confidence: 95 },
-  { crop: "Potato",  disease: "Bacterial Spot",  severity: 55, confidence: 85 },
-  { crop: "Rice",    disease: "Healthy",          severity: 0,  confidence: 97 },
+  { crop: "Maize",   disease: "Root Rot",       severity: 80, confidence: 95 },
+  { crop: "Potato",  disease: "Bacterial Spot", severity: 55, confidence: 85 },
+  { crop: "Rice",    disease: "Healthy",        severity: 0,  confidence: 97 },
 ];
 
 async function hashIndex(dataUrl: string): Promise<number> {
@@ -59,30 +59,24 @@ async function hashIndex(dataUrl: string): Promise<number> {
 }
 
 async function analyzeImage(preview: string, filename: string, t: (key: string) => string, language: string): Promise<AnalysisItem> {
-  // Always try real backend — token is now stored on login
   try {
-    const token = localStorage.getItem("farmlens_token");
-    console.log("[FarmLens] Token exists:", !!token, token ? `(${token.substring(0, 20)}...)` : "(none)");
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token;
     
     if (token) {
       const blob = await (await fetch(preview)).blob();
       const form = new FormData();
       form.append("file", blob, filename);
-      form.append("language", language);  // Send user's language preference
+      form.append("language", language);  
       
-      console.log("[FarmLens] Sending request to backend with language:", language);
-      
-      const res = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:8001'}/analyze`, {
+      const res = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'}/analyze`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
         body: form,
       });
       
-      console.log("[FarmLens] Backend response status:", res.status);
-      
       if (res.ok) {
         const d = await res.json();
-        console.log("[FarmLens] Backend response:", d);
         return {
           preview,
           filename,
@@ -100,18 +94,11 @@ async function analyzeImage(preview: string, filename: string, t: (key: string) 
           precautions: d.precautions || "",
         };
       }
-      // Log backend errors for debugging
-      const err = await res.json().catch(() => ({}));
-      console.error("[FarmLens] Backend error:", res.status, err);
-    } else {
-      console.warn("[FarmLens] No token found in localStorage");
-    }
+    } 
   } catch (e) {
     console.error("[FarmLens] Backend request failed:", e);
   }
 
-  // Deterministic frontend mock fallback
-  console.warn("[FarmLens] Using frontend mock fallback");
   const idx = await hashIndex(preview);
   const m = MOCK[idx];
   return {
@@ -136,17 +123,14 @@ const Result = () => {
   const [items, setItems] = useState<AnalysisItem[]>([]);
   const [groupedItems, setGroupedItems] = useState<{ [crop: string]: AnalysisItem[] }>({});
   const [currentCrop, setCurrentCrop] = useState<string>("");
-  const [currentIndex, setCurrentIndex] = useState(0);
   const [loading, setLoading] = useState(true);
 
-  // Initial load - runs once
   useEffect(() => {
     if (!isAuthenticated) { 
       navigate("/login"); 
       return; 
     }
 
-    // Load uploads
     let uploads: { preview: string; filename: string }[] = [];
     const raw = sessionStorage.getItem("farmlens_uploads");
     if (raw) { try { uploads = JSON.parse(raw); } catch { /* ignore */ } }
@@ -162,11 +146,9 @@ const Result = () => {
 
     (async () => {
       try {
-        console.log(`[FarmLens] Initial analysis in language: ${lang}`);
         const analyzed = await Promise.all(uploads.map(u => analyzeImage(u.preview, u.filename, t, lang)));
         setItems(analyzed);
         
-        // Group by crop type
         const grouped: { [crop: string]: AnalysisItem[] } = {};
         analyzed.forEach(item => {
           const crop = item.crop || "Unknown";
@@ -174,21 +156,69 @@ const Result = () => {
           grouped[crop].push(item);
         });
         setGroupedItems(grouped);
-        
-        // Set initial crop to first group
-        const firstCrop = Object.keys(grouped)[0] || "Unknown";
-        setCurrentCrop(firstCrop);
-        
+        setCurrentCrop(Object.keys(grouped)[0] || "Unknown");
         setLoading(false);
         
-        // Save to history (without image previews to avoid quota issues)
-        analyzed.forEach(a => addAnalysis({
-          imageName: a.filename,
-          crop: a.crop,
-          disease: a.disease,
-          severity: a.severity,
-          confidence: a.confidence,
-        }));
+        analyzed.forEach(async (a) => {
+          addAnalysis({
+            imageName: a.filename,
+            crop: a.crop,
+            disease: a.disease,
+            severity: a.severity,
+            confidence: a.confidence,
+          });
+
+          try {
+            const { data: { session } } = await supabase.auth.getSession();
+            const token = session?.access_token;
+            if (!token) return;
+
+            const uploadToBucket = async (base64Data: string, prefix: string) => {
+              if (!base64Data || !base64Data.startsWith('data:')) return null;
+              try {
+                const res = await fetch(base64Data);
+                const blob = await res.blob();
+                const fileExt = a.filename.split('.').pop() || 'jpg';
+                const fileName = `${prefix}_${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
+                
+                const { data, error } = await supabase.storage.from('images').upload(fileName, blob);
+                if (error) throw error;
+                if (data) {
+                  return supabase.storage.from('images').getPublicUrl(fileName).data.publicUrl;
+                }
+              } catch (err) {
+                console.error(`[FarmLens] Storage upload failed for ${prefix}:`, err);
+              }
+              return null;
+            };
+
+            const imageUrl = await uploadToBucket(a.preview, "crop");
+            const heatmapUrl = await uploadToBucket(a.heatmap, "heat");
+
+            const backendUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+            await fetch(`${backendUrl.replace(/\/$/, '')}/history`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+              },
+              body: JSON.stringify({
+                crop: a.crop,
+                disease: a.disease,
+                severity: a.severity,
+                confidence: a.confidence,
+                image_url: imageUrl,
+                heatmap_url: heatmapUrl,
+                symptoms: [],
+                prevention: a.precautions ? [a.precautions] : [],
+                treatment: a.treatment ? [a.treatment] : []
+              })
+            });
+          } catch (e) {
+            console.error("[FarmLens] Failed to save detailed history:", e);
+          }
+        });
+
       } catch (error) {
         console.error("[FarmLens] Analysis failed:", error);
         setLoading(false);
@@ -196,17 +226,12 @@ const Result = () => {
         navigate("/");
       }
     })();
-  }, []); // Run only once on mount
+  }, []); 
 
-  // Language change - re-analyze with new language
   useEffect(() => {
-    // Skip if no items loaded yet (initial load)
     if (items.length === 0) return;
-
     const reAnalyze = async () => {
       setLoading(true);
-      
-      // Load uploads from sessionStorage
       let uploads: { preview: string; filename: string }[] = [];
       const raw = sessionStorage.getItem("farmlens_uploads");
       if (raw) { try { uploads = JSON.parse(raw); } catch { /* ignore */ } }
@@ -218,11 +243,8 @@ const Result = () => {
       }
 
       try {
-        console.log(`[FarmLens] Re-analyzing in language: ${lang}`);
         const analyzed = await Promise.all(uploads.map(u => analyzeImage(u.preview, u.filename, t, lang)));
         setItems(analyzed);
-        
-        // Group by crop type
         const grouped: { [crop: string]: AnalysisItem[] } = {};
         analyzed.forEach(item => {
           const crop = item.crop || "Unknown";
@@ -230,16 +252,14 @@ const Result = () => {
           grouped[crop].push(item);
         });
         setGroupedItems(grouped);
-        
         setLoading(false);
       } catch (error) {
         console.error("[FarmLens] Re-analysis failed:", error);
         setLoading(false);
       }
     };
-
     reAnalyze();
-  }, [lang]); // Only re-run when language changes
+  }, [lang]); 
 
   if (loading) return (
     <div className="min-h-screen flex flex-col">
@@ -256,10 +276,9 @@ const Result = () => {
 
   if (!items.length) return null;
   
-  const item = items[0]; // For now, show first item (can be enhanced for multiple images)
+  const item = items[0];
   const isHealthy = item.status === "Healthy" || item.disease.toLowerCase() === "healthy";
   
-  // Determine severity level and color
   const getSeverityLevel = (severity: number) => {
     if (severity === 0) return { label: t("result.healthy"), color: "text-green-600", bgColor: "bg-green-100" };
     if (severity < 40) return { label: t("result.mild"), color: "text-yellow-600", bgColor: "bg-yellow-100" };
@@ -269,7 +288,6 @@ const Result = () => {
   
   const severityInfo = getSeverityLevel(item.severity);
   
-  // Get confidence level
   const getConfidenceLevel = (confidence: number) => {
     if (confidence >= 90) return { label: t("result.very_high"), color: "text-green-600" };
     if (confidence >= 80) return { label: t("result.high"), color: "text-blue-600" };
@@ -278,7 +296,6 @@ const Result = () => {
   };
   
   const confidenceInfo = getConfidenceLevel(item.confidence);
-
 
   return (
     <div className="min-h-screen flex flex-col bg-gradient-to-br from-background via-background to-primary/5">
@@ -292,7 +309,6 @@ const Result = () => {
             className="space-y-6"
           >
             
-            {/* Header Section */}
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
               <div>
                 <h1 className="text-3xl md:text-4xl font-display font-bold bg-gradient-to-r from-primary to-primary/70 bg-clip-text text-transparent">
@@ -303,7 +319,6 @@ const Result = () => {
                 </p>
               </div>
               
-              {/* Quick Actions */}
               <div className="flex gap-3">
                 <Button 
                   onClick={() => { 
@@ -325,7 +340,6 @@ const Result = () => {
               </div>
             </div>
 
-            {/* Status Banner */}
             <motion.div
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -345,12 +359,12 @@ const Result = () => {
                     )}
                     <div className="flex-1">
                       <h2 className="text-2xl font-bold">
-                        {isHealthy ? "Healthy Plant Detected" : "Disease Detected"}
+                        {isHealthy ? t("result.healthy_detected_title") : t("result.disease_detected_title")}
                       </h2>
                       <p className="text-muted-foreground">
                         {isHealthy 
-                          ? "Your plant appears to be in good health"
-                          : "Immediate attention recommended"
+                          ? t("result.healthy_desc")
+                          : t("result.infected_desc")
                         }
                       </p>
                     </div>
@@ -365,30 +379,26 @@ const Result = () => {
               </Card>
             </motion.div>
 
-            {/* Main Content Grid */}
             <div className="grid lg:grid-cols-2 gap-6">
               
-              {/* Left Column: Images */}
               <motion.div
                 initial={{ opacity: 0, x: -20 }}
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: 0.3 }}
                 className="space-y-6"
               >
-                {/* Original Image and Heatmap Side by Side */}
                 <Card>
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2">
                       <ImageIcon className="h-5 w-5 text-primary" />
-                      Visual Analysis
+                      {t("result.visual_analysis")}
                     </CardTitle>
                     <CardDescription>
-                      Original image and disease heatmap comparison
+                      {t("result.visual_desc")}
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <div className="grid grid-cols-2 gap-4">
-                      {/* Original Image */}
                       <div className="space-y-2">
                         <div className="relative rounded-lg overflow-hidden border-2 border-border group">
                           <img 
@@ -403,11 +413,10 @@ const Result = () => {
                           </div>
                         </div>
                         <p className="text-xs text-center text-muted-foreground font-medium">
-                          Uploaded Image
+                          {t("result.original")}
                         </p>
                       </div>
 
-                      {/* Heatmap Image */}
                       <div className="space-y-2">
                         {item.heatmap ? (
                           <>
@@ -424,7 +433,7 @@ const Result = () => {
                               </div>
                             </div>
                             <p className="text-xs text-center text-muted-foreground font-medium">
-                              Disease Regions
+                              {t("result.heatmap")}
                             </p>
                           </>
                         ) : (
@@ -432,7 +441,7 @@ const Result = () => {
                             <div className="text-center p-4">
                               <Activity className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
                               <p className="text-sm text-muted-foreground">
-                                {isHealthy ? "No heatmap for healthy plants" : "Heatmap not available"}
+                                Heatmap not available
                               </p>
                             </div>
                           </div>
@@ -440,43 +449,41 @@ const Result = () => {
                       </div>
                     </div>
 
-                    {/* Heatmap Legend */}
                     {item.heatmap && !isHealthy && (
                       <div className="bg-muted/50 rounded-lg p-4 space-y-3">
                         <div className="flex items-center gap-2 mb-2">
                           <Info className="h-4 w-4 text-primary" />
-                          <p className="text-sm font-semibold">Heatmap Legend</p>
+                          <p className="text-sm font-semibold">{t("result.heatmap_legend")}</p>
                         </div>
                         <div className="space-y-2">
                           <div className="flex items-center gap-3">
                             <div className="w-12 h-4 rounded" style={{ background: 'linear-gradient(to right, #0000ff, #00ffff)' }}></div>
-                            <span className="text-xs text-muted-foreground flex-1">Healthy Area</span>
+                            <span className="text-xs text-muted-foreground flex-1">{t("result.healthy_area")}</span>
                           </div>
                           <div className="flex items-center gap-3">
                             <div className="w-12 h-4 rounded" style={{ background: 'linear-gradient(to right, #00ff00, #ffff00)' }}></div>
-                            <span className="text-xs text-muted-foreground flex-1">Mild Infection</span>
+                            <span className="text-xs text-muted-foreground flex-1">{t("result.mild_infection")}</span>
                           </div>
                           <div className="flex items-center gap-3">
                             <div className="w-12 h-4 rounded" style={{ background: 'linear-gradient(to right, #ff8800, #ff0000)' }}></div>
-                            <span className="text-xs text-muted-foreground flex-1">Severe Infection</span>
+                            <span className="text-xs text-muted-foreground flex-1">{t("result.severe_infection")}</span>
                           </div>
                         </div>
                         <Separator />
                         <p className="text-xs text-muted-foreground italic text-center">
-                          Warmer colors indicate higher disease severity
+                          {t("result.warmer_colors")}
                         </p>
                       </div>
                     )}
                   </CardContent>
                 </Card>
 
-                {/* Explainability Card */}
                 {item.explanation && (
                   <Card className="bg-gradient-to-br from-blue-50/50 to-purple-50/50 dark:from-blue-950/20 dark:to-purple-950/20">
                     <CardHeader>
                       <CardTitle className="flex items-center gap-2 text-lg">
                         <Lightbulb className="h-5 w-5 text-blue-600" />
-                        Explainability
+                        {t("result.explainability")}
                       </CardTitle>
                     </CardHeader>
                     <CardContent>
@@ -488,7 +495,6 @@ const Result = () => {
                 )}
               </motion.div>
 
-              {/* Right Column: Analysis Details */}
               <motion.div
                 initial={{ opacity: 0, x: 20 }}
                 animate={{ opacity: 1, x: 0 }}
@@ -496,21 +502,19 @@ const Result = () => {
                 className="space-y-6"
               >
                 
-                {/* Detection Results Card */}
                 <Card>
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2">
                       <BarChart3 className="h-5 w-5 text-primary" />
-                      Detection Results
+                      {t("result.detection_results")}
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-6">
                     
-                    {/* Crop Name */}
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
                         <label className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
-                          Crop Name
+                          {t("result.crop_name")}
                         </label>
                       </div>
                       <div className="flex items-center gap-3">
@@ -525,11 +529,10 @@ const Result = () => {
 
                     <Separator />
 
-                    {/* Disease Name */}
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
                         <label className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
-                          Disease Name
+                          {t("result.disease_name")}
                         </label>
                       </div>
                       <div className="flex items-center gap-3">
@@ -547,11 +550,10 @@ const Result = () => {
 
                     <Separator />
 
-                    {/* Severity */}
                     <div className="space-y-3">
                       <div className="flex items-center justify-between">
                         <label className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
-                          Severity Level
+                          {t("result.severity_level")}
                         </label>
                         <Badge className={`${severityInfo.bgColor} ${severityInfo.color} border-none`}>
                           {severityInfo.label}
@@ -571,11 +573,10 @@ const Result = () => {
 
                     <Separator />
 
-                    {/* Confidence */}
                     <div className="space-y-3">
                       <div className="flex items-center justify-between">
                         <label className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
-                          AI Confidence
+                          {t("result.ai_confidence")}
                         </label>
                         <Badge variant="outline" className={confidenceInfo.color}>
                           {confidenceInfo.label}
@@ -592,14 +593,13 @@ const Result = () => {
                         </div>
                       </div>
                       <p className="text-xs text-muted-foreground italic">
-                        Model certainty in the prediction
+                        {t("result.model_certainty")}
                       </p>
                     </div>
 
                   </CardContent>
                 </Card>
 
-                {/* Disease Information Panel - Fetched from Database */}
                 <DiseaseInfoPanel
                   diseaseKey={item.disease_key}
                   diseaseName={item.disease}
@@ -608,16 +608,15 @@ const Result = () => {
                   isHealthy={isHealthy}
                 />
 
-                {/* Treatment Card */}
                 {item.treatment && !isHealthy && (
                   <Card className="bg-gradient-to-br from-green-50/50 to-emerald-50/50 dark:from-green-950/20 dark:to-emerald-950/20 border-green-200 dark:border-green-800">
                     <CardHeader>
                       <CardTitle className="flex items-center gap-2 text-green-700 dark:text-green-400">
                         <FileText className="h-5 w-5" />
-                        Personalized Treatment
+                        {t("result.treatment")}
                       </CardTitle>
                       <CardDescription>
-                        Recommended actions to address the detected disease
+                        {t("result.treatment_desc")}
                       </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
@@ -634,7 +633,7 @@ const Result = () => {
                             <div className="flex items-center gap-2">
                               <ShieldAlert className="h-4 w-4 text-orange-600" />
                               <h4 className="text-sm font-semibold text-orange-700 dark:text-orange-400">
-                                Precautions
+                                {t("result.precautions")}
                               </h4>
                             </div>
                             <div className="bg-orange-50/50 dark:bg-orange-950/20 rounded-lg p-3 border border-orange-200/50 dark:border-orange-800/50">
@@ -649,24 +648,22 @@ const Result = () => {
                   </Card>
                 )}
 
-                {/* Healthy Plant Care Card */}
                 {isHealthy && (
                   <Card className="bg-gradient-to-br from-green-50/50 to-emerald-50/50 dark:from-green-950/20 dark:to-emerald-950/20 border-green-200 dark:border-green-800">
                     <CardHeader>
                       <CardTitle className="flex items-center gap-2 text-green-700 dark:text-green-400">
                         <CheckCircle className="h-5 w-5" />
-                        Maintenance Tips
+                        {t("result.maintenance")}
                       </CardTitle>
                     </CardHeader>
                     <CardContent>
                       <p className="text-sm leading-relaxed">
-                        {item.treatment || "Continue regular watering and fertilization. Monitor plants weekly for early signs of disease or pest damage."}
+                        {item.treatment || t("result.maintenance_default")}
                       </p>
                     </CardContent>
                   </Card>
                 )}
 
-                {/* File Info */}
                 <Card className="bg-muted/30">
                   <CardContent className="pt-6">
                     <div className="flex items-center gap-3 text-sm text-muted-foreground">
@@ -679,7 +676,6 @@ const Result = () => {
               </motion.div>
             </div>
 
-            {/* Bottom Action Buttons (Mobile Friendly) */}
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
@@ -713,7 +709,7 @@ const Result = () => {
                 className="sm:w-auto"
               >
                 <ArrowLeft className="h-5 w-5 mr-2" />
-                Home
+                {t("result.home")}
               </Button>
             </motion.div>
 

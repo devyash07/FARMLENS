@@ -13,6 +13,7 @@ import {
   AlertTriangle
 } from "lucide-react";
 import { motion } from "framer-motion";
+import { useI18n } from "@/contexts/I18nContext";
 
 interface DiseaseData {
   crop: string;
@@ -40,6 +41,9 @@ export const DiseaseInfoPanel = ({
   const [diseaseData, setDiseaseData] = useState<DiseaseData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  
+  // Bring in the translation context
+  const { t, translateCrop, translateDisease, lang } = useI18n();
 
   useEffect(() => {
     const fetchDiseaseInfo = async () => {
@@ -55,8 +59,9 @@ export const DiseaseInfoPanel = ({
         const searchKey = diseaseKey || diseaseName || "";
         const apiBase = import.meta.env.VITE_API_BASE_URL || "http://localhost:8001";
         
+        // Pass the requested language directly to the Python backend API
         const response = await fetch(
-          `${apiBase}/api/disease/disease/${encodeURIComponent(searchKey)}`
+          `${apiBase}/api/disease/disease/${encodeURIComponent(searchKey)}?language=${lang}`
         );
 
         if (!response.ok) {
@@ -83,7 +88,7 @@ export const DiseaseInfoPanel = ({
     };
 
     fetchDiseaseInfo();
-  }, [diseaseKey, diseaseName, cropName]);
+  }, [diseaseKey, diseaseName, cropName, lang]); // re-fetch if language changes!
 
   if (isHealthy) {
     return (
@@ -96,34 +101,20 @@ export const DiseaseInfoPanel = ({
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-green-700 dark:text-green-400">
               <Sprout className="h-5 w-5" />
-              Plant Health Status
+              {t("result.healthy_detected_title")}
             </CardTitle>
             <CardDescription>
-              Your plant is in excellent condition
+              {t("result.healthy_desc")}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="bg-white/50 dark:bg-gray-900/50 rounded-lg p-4 border border-green-200/50 dark:border-green-800/50">
               <p className="text-sm font-semibold text-green-700 dark:text-green-400 mb-2">
-                ✓ Healthy Plant
+                ✓ {t("result.healthy")}
               </p>
               <p className="text-sm text-foreground leading-relaxed">
-                No disease symptoms detected. Continue with regular plant care including:
+                {t("result.maintenance_default")}
               </p>
-              <ul className="mt-3 space-y-2 text-sm text-foreground/80">
-                <li className="flex items-start gap-2">
-                  <Droplets className="h-4 w-4 mt-0.5 text-blue-500 flex-shrink-0" />
-                  <span>Regular watering appropriate to the plant type</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <Wind className="h-4 w-4 mt-0.5 text-blue-500 flex-shrink-0" />
-                  <span>Ensure proper air circulation and sunlight</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <Shield className="h-4 w-4 mt-0.5 text-blue-500 flex-shrink-0" />
-                  <span>Monitor weekly for any signs of disease or pests</span>
-                </li>
-              </ul>
             </div>
           </CardContent>
         </Card>
@@ -141,7 +132,7 @@ export const DiseaseInfoPanel = ({
         <Card>
           <CardContent className="pt-6 flex items-center justify-center py-8">
             <Loader2 className="h-5 w-5 animate-spin text-primary mr-2" />
-            <span className="text-muted-foreground">Loading disease information...</span>
+            <span className="text-muted-foreground">{t("result.loading")}</span>
           </CardContent>
         </Card>
       </motion.div>
@@ -149,7 +140,7 @@ export const DiseaseInfoPanel = ({
   }
 
   if (error || !diseaseData) {
-    return null; // Silently fail - disease info is supplementary
+    return null; 
   }
 
   return (
@@ -168,7 +159,7 @@ export const DiseaseInfoPanel = ({
               Symptoms to Watch
             </CardTitle>
             <CardDescription>
-              Common indicators of {diseaseData.disease}
+              Common indicators of {translateDisease(diseaseData.disease)}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -193,10 +184,10 @@ export const DiseaseInfoPanel = ({
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-blue-700 dark:text-blue-400">
               <Shield className="h-5 w-5" />
-              Prevention Measures
+              {t("guide.preventive")}
             </CardTitle>
             <CardDescription>
-              Steps to prevent {diseaseData.disease}
+              Steps to prevent {translateDisease(diseaseData.disease)}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -221,10 +212,10 @@ export const DiseaseInfoPanel = ({
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-green-700 dark:text-green-400">
               <Sprout className="h-5 w-5" />
-              Treatment Options
+              {t("result.treatment")}
             </CardTitle>
             <CardDescription>
-              Recommended treatments for {diseaseData.disease}
+              Recommended treatments for {translateDisease(diseaseData.disease)}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -251,12 +242,12 @@ export const DiseaseInfoPanel = ({
         <CardContent>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <p className="text-xs text-muted-foreground mb-1">Crop</p>
-              <Badge variant="outline">{diseaseData.crop}</Badge>
+              <p className="text-xs text-muted-foreground mb-1">{t("result.crop_label")}</p>
+              <Badge variant="outline">{translateCrop(diseaseData.crop)}</Badge>
             </div>
             <div>
-              <p className="text-xs text-muted-foreground mb-1">Disease</p>
-              <Badge variant="secondary">{diseaseData.disease}</Badge>
+              <p className="text-xs text-muted-foreground mb-1">{t("result.disease_label")}</p>
+              <Badge variant="secondary">{translateDisease(diseaseData.disease)}</Badge>
             </div>
           </div>
         </CardContent>

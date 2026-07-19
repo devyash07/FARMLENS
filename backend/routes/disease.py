@@ -7,18 +7,38 @@ from fastapi import APIRouter, HTTPException
 import json
 import os
 from typing import Optional
+import urllib.request
+import urllib.parse
 
 router = APIRouter()
 
 # Load disease info globally
 _DISEASE_INFO = None
 
+# --- Zero Dependency Translator ---
+def translate_content(text, target_lang):
+    if not text or target_lang == "en":
+        return text
+    try:
+        # Recursively handle lists (like symptoms and prevention arrays)
+        if isinstance(text, list):
+            return [translate_content(item, target_lang) for item in text]
+            
+        url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl={target_lang}&dt=t&q={urllib.parse.quote(str(text))}"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=5) as response:
+            data = json.loads(response.read().decode())
+            return "".join([sentence[0] for sentence in data[0] if sentence[0]])
+    except Exception as e:
+        print(f"[Translator] Failed to translate: {e}")
+        return text
+# ----------------------------------
+
 def _load_disease_info():
     """Load the disease information knowledge base"""
     global _DISEASE_INFO
     if _DISEASE_INFO is not None:
         return _DISEASE_INFO
-    
     try:
         disease_info_path = "disease_info.json"
         if os.path.exists(disease_info_path):
@@ -35,65 +55,59 @@ def _load_disease_info():
 
 
 @router.get("/disease/{disease_key}")
-def get_disease_info(disease_key: str):
+def get_disease_info(disease_key: str, language: str = "en"):
     """
     Get detailed information for a specific disease
-    
-    Args:
-        disease_key: The disease identifier (e.g., "Tomato_Early_Blight")
-    
-    Returns:
-        Disease information including symptoms, prevention, and treatment
     """
     disease_db = _load_disease_info()
-    
     if not disease_db:
         raise HTTPException(status_code=503, detail="Disease database not loaded")
-    
+        
+    def prepare_response(key, data_obj):
+        # Deep copy to avoid translating the master database in-memory
+        data = data_obj.copy() 
+        if language != "en":
+            print(f"[Disease API] Translating database entry to {language}...")
+            data["symptoms"] = translate_content(data.get("symptoms", []), language)
+            data["prevention"] = translate_content(data.get("prevention", []), language)
+            data["treatment"] = translate_content(data.get("treatment", []), language)
+        return data
+
     # Try exact match first
     if disease_key in disease_db:
         return {
             "key": disease_key,
             "found": True,
-            "data": disease_db[disease_key]
+            "data": prepare_response(disease_key, disease_db[disease_key])
         }
-    
+        
     # Try case-insensitive match
     for key in disease_db.keys():
         if key.lower() == disease_key.lower():
             return {
                 "key": key,
                 "found": True,
-                "data": disease_db[key]
+                "data": prepare_response(key, disease_db[key])
             }
-    
+            
     # Try partial match (for variations)
     matching_keys = [k for k in disease_db.keys() if disease_key.lower() in k.lower()]
-    
     if matching_keys:
         return {
             "key": disease_key,
             "found": True,
-            "matches": matching_keys[:5],  # Return top 5 matches
-            "data": disease_db[matching_keys[0]]  # Return best match
+            "matches": matching_keys[:5], 
+            "data": prepare_response(matching_keys[0], disease_db[matching_keys[0]]) 
         }
-    
+        
     raise HTTPException(status_code=404, detail=f"Disease '{disease_key}' not found in database")
 
 
 @router.get("/disease")
 def list_all_diseases():
-    """
-    Get a list of all diseases in the database
-    
-    Returns:
-        List of disease keys and basic info
-    """
     disease_db = _load_disease_info()
-    
     if not disease_db:
         raise HTTPException(status_code=503, detail="Disease database not loaded")
-    
     return {
         "total": len(disease_db),
         "diseases": [
@@ -109,17 +123,9 @@ def list_all_diseases():
 
 @router.get("/crops")
 def get_crops():
-    """
-    Get list of all crops in the database
-    
-    Returns:
-        List of unique crops with disease counts
-    """
     disease_db = _load_disease_info()
-    
     if not disease_db:
         raise HTTPException(status_code=503, detail="Disease database not loaded")
-    
     crops = {}
     for key, info in disease_db.items():
         crop = info.get("crop", "Unknown")
@@ -134,7 +140,6 @@ def get_crops():
             "key": key,
             "name": info.get("disease", key)
         })
-    
     return {
         "total_crops": len(crops),
         "crops": list(crops.values())
@@ -143,22 +148,10 @@ def get_crops():
 
 @router.get("/disease-by-crop/{crop_name}")
 def get_diseases_by_crop(crop_name: str):
-    """
-    Get all diseases for a specific crop
-    
-    Args:
-        crop_name: The crop name (e.g., "Tomato")
-    
-    Returns:
-        List of diseases affecting the crop
-    """
     disease_db = _load_disease_info()
-    
     if not disease_db:
         raise HTTPException(status_code=503, detail="Disease database not loaded")
-    
     matching_diseases = []
-    
     for key, info in disease_db.items():
         if info.get("crop", "").lower() == crop_name.lower():
             matching_diseases.append({
@@ -167,10 +160,8 @@ def get_diseases_by_crop(crop_name: str):
                 "symptoms": info.get("symptoms", []),
                 "severity_indicator": "Healthy" in info.get("disease", "")
             })
-    
     if not matching_diseases:
         raise HTTPException(status_code=404, detail=f"No diseases found for crop '{crop_name}'")
-    
     return {
         "crop": crop_name,
         "disease_count": len(matching_diseases),
@@ -180,52 +171,30 @@ def get_diseases_by_crop(crop_name: str):
 
 @router.post("/disease/search")
 def search_diseases(query: str = None, crop: Optional[str] = None, limit: int = 10):
-    """
-    Search diseases by name or crop
-    
-    Args:
-        query: Search term for disease name or symptoms
-        crop: Filter by crop type
-        limit: Max number of results
-    
-    Returns:
-        List of matching diseases
-    """
     disease_db = _load_disease_info()
-    
     if not disease_db:
         raise HTTPException(status_code=503, detail="Disease database not loaded")
-    
     results = []
     query_lower = query.lower() if query else ""
     crop_lower = crop.lower() if crop else ""
-    
     for key, info in disease_db.items():
-        # Check crop filter
         if crop_lower and crop_lower not in info.get("crop", "").lower():
             continue
-        
-        # Check query match in disease name
         if query_lower:
             disease_name = info.get("disease", "").lower()
             key_lower = key.lower()
-            
             if query_lower not in disease_name and query_lower not in key_lower:
-                # Check symptoms
                 symptoms_text = " ".join(info.get("symptoms", [])).lower()
                 if query_lower not in symptoms_text:
                     continue
-        
         results.append({
             "key": key,
             "name": info.get("disease", key),
             "crop": info.get("crop", "Unknown"),
             "symptoms": info.get("symptoms", []),
         })
-        
         if len(results) >= limit:
             break
-    
     return {
         "query": query or "all",
         "crop_filter": crop or "all",

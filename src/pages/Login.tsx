@@ -9,7 +9,8 @@ import { Eye, EyeOff, ChevronDown, Globe, Loader2, AlertCircle } from "lucide-re
 import { Alert, AlertDescription } from "@/components/ui/alert";
 
 const Login = () => {
-  const { login, register, isLoading, error, clearError, isAuthenticated } = useAuth();
+  // 1. Added loginWithGoogle to the destructured context
+  const { login, register, loginWithGoogle, isLoading, error, clearError, isAuthenticated } = useAuth();
   const { t, lang, setLang } = useI18n();
   const navigate = useNavigate();
   const location = useLocation();
@@ -111,8 +112,13 @@ const Login = () => {
     }
   };
 
-  const handleGoogle = () => {
-    setLocalError("Google sign-in coming soon!");
+  // 2. Updated to actually trigger the Supabase Google OAuth flow
+  const handleGoogle = async () => {
+    try {
+      await loginWithGoogle();
+    } catch (err: any) {
+      console.error("Google auth error:", err);
+    }
   };
 
   const displayError = error || localError;

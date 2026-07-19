@@ -1,7 +1,14 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { createClient } from "@supabase/supabase-js";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+// Initialize Supabase client (with fallback if not configured)
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || "";
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || "";
+
+// Only create Supabase client if both URL and key are configured
+export const supabase = (supabaseUrl && supabaseAnonKey) 
+  ? createClient(supabaseUrl, supabaseAnonKey)
+  : null;
 
 export interface User {
   name: string;
@@ -29,6 +36,7 @@ interface AuthContextType {
   error: string | null;
   login: (email: string, password: string) => Promise<void>;
   register: (name: string, email: string, password: string) => Promise<void>;
+  loginWithGoogle: () => Promise<void>;
   logout: () => void;
   updateProfile: (updates: Partial<User & { password?: string }>) => Promise<void>;
   clearError: () => void;
@@ -38,119 +46,107 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// Token management
-const TOKEN_KEY = "farmlens_token";
-const USER_KEY = "farmlens_user";
-
-function saveToken(token: string) {
-  localStorage.setItem(TOKEN_KEY, token);
-}
-
-function getToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY);
-}
-
-function clearToken() {
-  localStorage.removeItem(TOKEN_KEY);
-}
-
-function saveUser(user: User) {
-  localStorage.setItem(USER_KEY, JSON.stringify(user));
-}
-
-function getStoredUser(): User | null {
-  const saved = localStorage.getItem(USER_KEY);
-  return saved ? JSON.parse(saved) : null;
-}
-
-function clearUser() {
-  localStorage.removeItem(USER_KEY);
-}
-
-// API helper with auth token
-async function apiCall(endpoint: string, options: RequestInit = {}) {
-  const token = getToken();
-  const headers: HeadersInit = {
-    'Content-Type': 'application/json',
-    ...options.headers,
-  };
-
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-    ...options,
-    headers,
-  });
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Request failed' }));
-    throw new Error(error.detail || `HTTP ${response.status}`);
-  }
-
-  return response.json();
-}
-
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(getStoredUser);
-  const [isLoading, setIsLoading] = useState(false);
+  const [user, setUser] = useState<User | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<AnalysisRecord[]>(() => {
     const saved = localStorage.getItem("farmlens_history");
     return saved ? JSON.parse(saved) : [];
   });
 
-  // Verify token on mount
+  // Verify and sync Supabase session on mount
   useEffect(() => {
-    const verifyToken = async () => {
-      const token = getToken();
-      const storedUser = getStoredUser();
-
-      if (token && storedUser) {
+    if (!supabase) {
+      const token = localStorage.getItem("farmlens_token");
+      if (token) {
         try {
-          // Verify token is still valid
-          const userData = await apiCall('/api/auth/me');
-          setUser(userData);
-          saveUser(userData);
-        } catch (err) {
-          // Token is invalid, clear auth
-          console.error('[Auth] Token verification failed:', err);
-          clearToken();
-          clearUser();
-          setUser(null);
+          const userData = JSON.parse(localStorage.getItem("farmlens_user") || "{}");
+          if (userData.email) {
+            setUser(userData);
+          }
+        } catch (e) {
+          console.warn("[FarmLens] Could not restore local auth session");
         }
       }
-    };
+      setIsLoading(false);
+      return;
+    }
 
-    verifyToken();
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        setUser({
+          userId: session.user.id,
+          email: session.user.email || "",
+          name: session.user.user_metadata?.name || session.user.email?.split("@")[0] || "User",
+          avatar: session.user.user_metadata?.avatar_url,
+        });
+        localStorage.setItem("farmlens_token", session.access_token);
+      }
+      setIsLoading(false);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        setUser({
+          userId: session.user.id,
+          email: session.user.email || "",
+          name: session.user.user_metadata?.name || session.user.email?.split("@")[0] || "User",
+          avatar: session.user.user_metadata?.avatar_url,
+        });
+        localStorage.setItem("farmlens_token", session.access_token);
+      } else {
+        // Enforce strict logout on auth state change
+        setUser(null);
+        setHistory([]);
+        localStorage.removeItem("farmlens_token");
+        localStorage.removeItem("farmlens_user");
+        localStorage.removeItem("farmlens_history");
+      }
+      setIsLoading(false);
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
-  const clearError = useCallback(() => {
-    setError(null);
-  }, []);
+  const clearError = useCallback(() => setError(null), []);
 
   const login = useCallback(async (email: string, password: string) => {
     setIsLoading(true);
     setError(null);
-
     try {
-      const data = await apiCall('/api/auth/login', {
-        method: 'POST',
-        body: JSON.stringify({ email, password }),
-      });
-
-      saveToken(data.access_token);
-      saveUser(data.user);
-      setUser(data.user);
+      if (supabase) {
+        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+      } else {
+        const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'}/api/auth/login`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password })
+        });
+        if (!response.ok) {
+          const data = await response.json();
+          throw new Error(data.detail || "Login failed");
+        }
+        const data = await response.json();
+        const userData: User = {
+          userId: data.user_id,
+          email: data.email,
+          name: data.name || email.split("@")[0],
+        };
+        setUser(userData);
+        localStorage.setItem("farmlens_token", data.token);
+        localStorage.setItem("farmlens_user", JSON.stringify(userData));
+      }
       sessionStorage.setItem("farmlens_just_logged_in", "1");
-      
-      console.log('[Auth] Login successful:', data.user.email);
     } catch (err: any) {
-      const errorMsg = err.message || 'Login failed';
-      setError(errorMsg);
-      console.error('[Auth] Login error:', errorMsg);
-      throw new Error(errorMsg);
+      // Smart error handling for Google accounts
+      if (err.message.includes("Invalid login credentials")) {
+        setError("Invalid password, or this email uses Google Login. Try 'Continue with Google'.");
+      } else {
+        setError(err.message || "Login failed");
+      }
+      throw err;
     } finally {
       setIsLoading(false);
     }
@@ -159,86 +155,99 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const register = useCallback(async (name: string, email: string, password: string) => {
     setIsLoading(true);
     setError(null);
-
     try {
-      const data = await apiCall('/api/auth/register', {
-        method: 'POST',
-        body: JSON.stringify({ name, email, password }),
-      });
-
-      saveToken(data.access_token);
-      saveUser(data.user);
-      setUser(data.user);
+      if (supabase) {
+        const { error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: { data: { name } }
+        });
+        if (error) throw error;
+      } else {
+        const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'}/api/auth/register`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name, email, password })
+        });
+        if (!response.ok) {
+          const data = await response.json();
+          throw new Error(data.detail || "Registration failed");
+        }
+        const data = await response.json();
+        const userData: User = {
+          userId: data.user_id,
+          email: data.email,
+          name: data.name,
+        };
+        setUser(userData);
+        localStorage.setItem("farmlens_token", data.token);
+        localStorage.setItem("farmlens_user", JSON.stringify(userData));
+      }
       sessionStorage.setItem("farmlens_just_logged_in", "1");
-      
-      console.log('[Auth] Registration successful:', data.user.email);
     } catch (err: any) {
-      const errorMsg = err.message || 'Registration failed';
-      setError(errorMsg);
-      console.error('[Auth] Registration error:', errorMsg);
-      throw new Error(errorMsg);
+      setError(err.message || "Registration failed");
+      throw err;
     } finally {
       setIsLoading(false);
     }
   }, []);
 
-  const logout = useCallback(() => {
-    // Call logout endpoint for logging purposes
-    const token = getToken();
-    if (token) {
-      apiCall('/api/auth/logout', { method: 'POST' }).catch(err => {
-        console.warn('[Auth] Logout endpoint failed:', err);
-      });
+  const loginWithGoogle = useCallback(async () => {
+    if (!supabase) {
+      setError("Google login not available without Supabase configuration");
+      return;
     }
-
-    // Clear local state
-    clearToken();
-    clearUser();
-    setUser(null);
+    setIsLoading(true);
     setError(null);
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: window.location.origin,
+        }
+      });
+      if (error) throw error;
+    } catch (err: any) {
+      setError(err.message || "Google login failed");
+      setIsLoading(false);
+      throw err;
+    }
+  }, []);
+
+  const logout = useCallback(async () => {
+    if (supabase) {
+      await supabase.auth.signOut();
+    }
     
-    console.log('[Auth] User logged out');
+    // AIRTIGHT LOGOUT: Destroy all local session data
+    setUser(null);
+    setHistory([]);
+    localStorage.removeItem("farmlens_token");
+    localStorage.removeItem("farmlens_user");
+    localStorage.removeItem("farmlens_history");
+    sessionStorage.removeItem("farmlens_uploads"); 
+    sessionStorage.removeItem("farmlens_just_logged_in");
   }, []);
 
   const updateProfile = useCallback(async (updates: Partial<User & { password?: string }>) => {
     setIsLoading(true);
     setError(null);
-
     try {
       if (updates.password) {
-        // Handle password change separately
-        await apiCall('/api/auth/change-password', {
-          method: 'POST',
-          body: JSON.stringify({
-            current_password: '', // Frontend should collect this
-            new_password: updates.password,
-          }),
-        });
+        const { error } = await supabase.auth.updateUser({ password: updates.password });
+        if (error) throw error;
       }
-
       if (updates.name || updates.phone !== undefined) {
-        const profileData = await apiCall('/api/auth/profile', {
-          method: 'PUT',
-          body: JSON.stringify({
-            name: updates.name,
-            phone: updates.phone,
-          }),
+        const { error } = await supabase.auth.updateUser({
+          data: { name: updates.name, phone: updates.phone }
         });
-
-        setUser(prev => {
-          if (!prev) return prev;
-          const updated = { ...prev, ...profileData };
-          saveUser(updated);
-          return updated;
-        });
+        if (error) throw error;
+        
+        setUser(prev => prev ? { ...prev, name: updates.name || prev.name, phone: updates.phone || prev.phone } : null);
       }
-
-      console.log('[Auth] Profile updated successfully');
     } catch (err: any) {
-      const errorMsg = err.message || 'Profile update failed';
-      setError(errorMsg);
-      console.error('[Auth] Profile update error:', errorMsg);
-      throw new Error(errorMsg);
+      setError(err.message || "Profile update failed");
+      throw err;
     } finally {
       setIsLoading(false);
     }
@@ -273,17 +282,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   return (
     <AuthContext.Provider 
       value={{ 
-        user, 
-        isAuthenticated: !!user, 
-        isLoading,
-        error,
-        login, 
-        register, 
-        logout, 
-        updateProfile,
-        clearError,
-        history, 
-        addAnalysis 
+        user, isAuthenticated: !!user, isLoading, error,
+        login, register, loginWithGoogle, logout, updateProfile, clearError, history, addAnalysis 
       }}
     >
       {children}
