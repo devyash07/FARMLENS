@@ -5,6 +5,9 @@ from dotenv import load_dotenv
 import os
 import logging
 import asyncio
+import sentry_sdk
+from sentry_sdk.integrations.fastapi import FastApiIntegration
+from sentry_sdk.integrations.starlette import StarletteIntegration
 
 # Rate limiting
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -21,6 +24,33 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Initialize Sentry for error tracking
+SENTRY_DSN = os.getenv("SENTRY_DSN")
+ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
+
+if SENTRY_DSN:
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        environment=ENVIRONMENT,
+        integrations=[
+            StarletteIntegration(transaction_style="url"),
+            FastApiIntegration(transaction_style="url"),
+        ],
+        # Set traces_sample_rate to 1.0 to capture 100% of transactions for performance monitoring.
+        # Adjust this value in production (0.1 = 10% of requests)
+        traces_sample_rate=0.1 if ENVIRONMENT == "production" else 1.0,
+        # Set profiles_sample_rate to profile 10% of sampled transactions
+        profiles_sample_rate=0.1 if ENVIRONMENT == "production" else 1.0,
+        # Send default PII (email, username) with error events
+        send_default_pii=False,  # Set to False in production for privacy
+        # Attach stack traces to all messages
+        attach_stacktrace=True,
+    )
+    logger.info(f"✅ Sentry initialized for {ENVIRONMENT} environment")
+else:
+    logger.warning("⚠️  Sentry DSN not configured - error tracking disabled")
+    logger.warning("   Add SENTRY_DSN to .env for production error monitoring")
+
 from routes.analyze import router as analyze_router
 from routes.history import router as history_router
 from routes.feedback import router as feedback_router
@@ -28,8 +58,7 @@ from routes.chatbot import router as chatbot_router
 from routes.auth import router as auth_router
 from routes.disease import router as disease_router
 
-# Get environment
-ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
+# Get environment (already loaded above)
 logger.info(f"Starting FarmLens API in {ENVIRONMENT} mode")
 
 # Initialize rate limiter
@@ -108,7 +137,25 @@ def root():
 
 @app.get("/health")
 def health_check():
-    """Health check endpoint for monitoring"""
+    """
+    Health check endpoint for monitoring services (UptimeRobot, Pingdom, etc.)
+    
+    Returns:
+    - status: "healthy" if service is running
+    - environment: current environment (development/production)
+    - ml_model: AI model configuration and availability
+    - pytorch_available: GPU availability status
+    - backup_apis: External API configuration status
+    - supabase_configured: Database connection status
+    
+    Usage with UptimeRobot:
+    1. Go to https://uptimerobot.com
+    2. Create "HTTP(s)" monitor
+    3. URL: https://your-api-domain.com/health
+    4. Keyword: "healthy" (checks if response contains this word)
+    5. Interval: 5 minutes
+    6. Alerts: Email/SMS/Slack
+    """
     import torch
     
     # Check if ML model files exist

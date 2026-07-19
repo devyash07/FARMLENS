@@ -16,3 +16,4 @@ anthropic
 requests
 tensorflow>=2.13.0
 slowapi
+sentry-sdk[fastapi]
