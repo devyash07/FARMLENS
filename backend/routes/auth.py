@@ -459,21 +459,3 @@ async def logout(email: str = Depends(get_current_user_email)):
     logger.info(f"User logged out: {email}")
     
     return {"message": "Logged out successfully"}
-
-
-# ============================================================================
-# Admin/Debug Routes (Remove in production)
-# ============================================================================
-
-@router.get("/debug/users", include_in_schema=False)
-async def debug_list_users():
-    """Debug endpoint to list all users (REMOVE IN PRODUCTION)"""
-    users = []
-    for email, user_data in USERS_DB.items():
-        users.append({
-            "email": email,
-            "name": user_data["name"],
-            "userId": user_data["userId"],
-            "created_at": user_data.get("created_at"),
-        })
-    return {"users": users, "count": len(users)}
