@@ -14,20 +14,20 @@ const HeroSection = () => {
   const { lang } = useI18n();
   const navigate = useNavigate();
 
-  const heroImages: Record<string, string> = {
-    en: "/englsih-hero.png",
-    hi: "/hindi-hero.png",
-    bn: "/bengali-hero.png",
-    te: "/telugu-hero.png",
-    mr: "/marathi-hero.png",
-    ta: "/tamil-hero.png",
-    gu: "/gujarati-hero.png",
-    kn: "/kannada-hero.png",
-    pa: "/punjabi-hero.png",
-    or: "/odia-hero.png",
-    ml: "/malayalam-hero.png",
+  const heroImages: Record<string, { webp: string; png: string }> = {
+    en: { webp: "/englsih-hero.webp", png: "/englsih-hero.png" },
+    hi: { webp: "/hindi-hero.webp", png: "/hindi-hero.png" },
+    bn: { webp: "/bengali-hero.webp", png: "/bengali-hero.png" },
+    te: { webp: "/telugu-hero.webp", png: "/telugu-hero.png" },
+    mr: { webp: "/marathi-hero.webp", png: "/marathi-hero.png" },
+    ta: { webp: "/tamil-hero.webp", png: "/tamil-hero.png" },
+    gu: { webp: "/gujarati-hero.webp", png: "/gujarati-hero.png" },
+    kn: { webp: "/kannada-hero.webp", png: "/kannada-hero.png" },
+    pa: { webp: "/punjabi-hero.webp", png: "/punjabi-hero.png" },
+    or: { webp: "/odia-hero.webp", png: "/odia-hero.png" },
+    ml: { webp: "/malayalam-hero.webp", png: "/malayalam-hero.png" },
   };
-  const heroImage = heroImages[lang] ?? "/main.png";
+  const heroImage = heroImages[lang] ?? { webp: "/main.webp", png: "/main.png" };
 
   const handleGetStarted = () => {
     if (isAuthenticated) {
@@ -44,13 +44,17 @@ const HeroSection = () => {
         aspectRatio: "2528 / 1688", // Explicitly lock the container to image dimensions
       }}
     >
-      {/* Background Image - Forced to absolute 100% of the aspect-ratio box */}
-      <img
-        src={heroImage}
-        alt="FarmLens hero"
-        className="absolute inset-0 w-full h-full block"
-        style={{ objectFit: "fill" }} 
-      />
+      {/* Background Image - WebP with PNG fallback */}
+      <picture className="absolute inset-0 w-full h-full block">
+        <source srcSet={heroImage.webp} type="image/webp" />
+        <img
+          src={heroImage.png}
+          alt="FarmLens hero"
+          className="w-full h-full"
+          style={{ objectFit: "fill" }}
+          fetchPriority="high"
+        />
+      </picture>
 
       {/* Get started hotspot */}
       <button
@@ -79,7 +83,7 @@ const HeroSection = () => {
             aria-label={alt}
             className="hover:scale-110 transition-transform duration-200 block w-full"
           >
-            <img src={src} alt={alt} className="w-full h-auto" />
+            <img src={src} alt={alt} className="w-full h-auto" loading="lazy" />
           </motion.a>
         ))}
       </div>

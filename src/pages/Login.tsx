@@ -127,7 +127,7 @@ const Login = () => {
     <div className="min-h-screen flex">
       {/* Left panel */}
       <div className="hidden lg:block w-1/2 relative">
-        <img src="/login-left.png" alt="FarmLens" className="w-full h-full object-cover" />
+        <img src="/login-left.png" alt="FarmLens" className="w-full h-full object-cover" loading="lazy" />
       </div>
 
       {/* Right panel */}
