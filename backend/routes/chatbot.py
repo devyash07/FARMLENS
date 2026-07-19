@@ -1,14 +1,17 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel
 from typing import List, Optional
 from google import genai
 from google.genai import types
 import os
 from dotenv import load_dotenv
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 load_dotenv()
 
 router = APIRouter()
+limiter = Limiter(key_func=get_remote_address)
 
 # Configure Gemini API
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -68,13 +71,14 @@ def is_agriculture_related(message: str) -> bool:
     return any(keyword in message_lower for keyword in agriculture_keywords)
 
 @router.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
+@limiter.limit("20/minute")  # Limit to 20 chatbot queries per minute per IP
+async def chat(request: Request, chat_request: ChatRequest):
     """
     Chat endpoint for agriculture-specific queries using Gemini
     """
     try:
         # Check if question is agriculture-related
-        if not is_agriculture_related(request.message):
+        if not is_agriculture_related(chat_request.message):
             return ChatResponse(
                 response="I'm FarmLens AI Assistant, specialized in agriculture. I can only help with farming, crops, and agricultural topics. Please ask me about agriculture-related matters like crop diseases, pest management, fertilizers, irrigation, or any farming practices.",
                 is_agriculture_related=False
@@ -87,12 +91,12 @@ async def chat(request: ChatRequest):
         conversation_context = AGRICULTURE_SYSTEM_PROMPT + "\n\n"
         
         # Add recent conversation history (last 5 exchanges)
-        for msg in request.history[-10:]:
+        for msg in chat_request.history[-10:]:
             role_label = "User" if msg.role == "user" else "Assistant"
             conversation_context += f"{role_label}: {msg.content}\n"
         
         # Add current question
-        full_prompt = f"{conversation_context}\nUser: {request.message}\nAssistant:"
+        full_prompt = f"{conversation_context}\nUser: {chat_request.message}\nAssistant:"
         
         # Generate response using Gemini
         response = client.models.generate_content(

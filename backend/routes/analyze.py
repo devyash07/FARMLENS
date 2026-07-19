@@ -1,11 +1,14 @@
-from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Form, Header
+from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Form, Header, Request
 from typing import Optional
 from utils.auth import get_current_user
 from services.ai_service import predict
 from services.storage_service import upload_image
 from supabase_client import supabase
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 router = APIRouter()
+limiter = Limiter(key_func=get_remote_address)
 
 # STRICT file type validation - Only JPG, JPEG, and PNG
 ALLOWED_TYPES = {"image/jpeg", "image/png"}
@@ -13,7 +16,9 @@ ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png"}
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB in bytes
 
 @router.post("/analyze")
+@limiter.limit("10/minute")  # Limit to 10 AI predictions per minute per IP
 async def analyze_image(
+    request: Request,  # Required for rate limiting
     file: UploadFile = File(...),
     language: str = Form("en"),  # Get language from form data
     authorization: Optional[str] = Header(None),  # Make auth optional

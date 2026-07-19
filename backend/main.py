@@ -1,8 +1,15 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 import os
 import logging
+import asyncio
+
+# Rate limiting
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 # Load environment variables
 load_dotenv()
@@ -25,6 +32,9 @@ from routes.disease import router as disease_router
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
 logger.info(f"Starting FarmLens API in {ENVIRONMENT} mode")
 
+# Initialize rate limiter
+limiter = Limiter(key_func=get_remote_address, default_limits=["100/minute"])
+
 # Get allowed origins from environment variable
 allowed_origins_str = os.getenv(
     "ALLOWED_ORIGINS",
@@ -44,6 +54,26 @@ app = FastAPI(
     version="1.0.0",
     description="AI-Powered Crop Disease Detection API"
 )
+
+# Attach rate limiter to app state
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# Timeout middleware - prevents requests from hanging indefinitely
+@app.middleware("http")
+async def timeout_middleware(request: Request, call_next):
+    """Add 30-second timeout to all requests"""
+    try:
+        return await asyncio.wait_for(call_next(request), timeout=30.0)
+    except asyncio.TimeoutError:
+        logger.error(f"Request timeout: {request.method} {request.url.path}")
+        return JSONResponse(
+            status_code=408,
+            content={
+                "error": "Request timeout",
+                "message": "The request took too long to process. Please try again."
+            }
+        )
 
 app.add_middleware(
     CORSMiddleware,

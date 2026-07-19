@@ -3,7 +3,7 @@ Authentication routes for FarmLens
 Handles user registration, login, token refresh, and password management
 """
 
-from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi import APIRouter, HTTPException, Depends, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr, Field
 from jose import jwt, JWTError
@@ -14,11 +14,14 @@ import hashlib
 import secrets
 from typing import Optional
 import logging
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 bearer_scheme = HTTPBearer()
+limiter = Limiter(key_func=get_remote_address)
 
 # JWT Configuration
 SECRET_KEY = os.getenv("JWT_SECRET_KEY", "farmlens-secret-key-change-in-production")
@@ -205,7 +208,8 @@ _init_demo_user()
 # ============================================================================
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
-async def register(req: RegisterRequest):
+@limiter.limit("3/hour")  # Limit to 3 registrations per hour per IP
+async def register(request: Request, req: RegisterRequest):
     """
     Register a new user
     
@@ -271,7 +275,8 @@ async def register(req: RegisterRequest):
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(req: LoginRequest):
+@limiter.limit("5/minute")  # Limit to 5 login attempts per minute per IP (prevent brute force)
+async def login(request: Request, req: LoginRequest):
     """
     Authenticate user and return JWT token
     
