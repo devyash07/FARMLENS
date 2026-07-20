@@ -41,18 +41,19 @@ const HeroSection = () => {
     <section 
       className="relative w-full overflow-hidden bg-white" 
       style={{ 
-        aspectRatio: "2528 / 1688", // Explicitly lock the container to image dimensions
+        aspectRatio: "2528 / 1688",
+        minHeight: "300px", // Add minimum height fallback
       }}
     >
       {/* Background Image - WebP with PNG fallback */}
-      <picture className="absolute inset-0 w-full h-full block">
+      <picture className="absolute inset-0 w-full h-full" style={{ display: "block" }}>
         <source srcSet={heroImage.webp} type="image/webp" />
         <img
           src={heroImage.png}
           alt="FarmLens hero"
-          className="w-full h-full"
-          style={{ objectFit: "fill" }}
-          fetchPriority="high"
+          className="w-full h-full block"
+          style={{ objectFit: "fill", display: "block" }}
+          fetchpriority="high" 
         />
       </picture>
 

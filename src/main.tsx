@@ -36,7 +36,8 @@ try {
       console.log(`✅ Sentry initialized for ${ENVIRONMENT} environment`);
     });
   } else {
-    console.warn("⚠️  Sentry DSN not configured - error tracking disabled");
+    // Commented out to keep the console clean locally
+    // console.warn("⚠️  Sentry DSN not configured - error tracking disabled");
   }
 } catch (error) {
   console.warn("Failed to initialize Sentry:", error);
