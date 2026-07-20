@@ -45,7 +45,8 @@ const Profile = () => {
         const backendUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
         const res = await fetch(`${backendUrl.replace(/\/$/, '')}/history`, {
           headers: {
-            'Authorization': `Bearer ${session.access_token}`
+            'Authorization': `Bearer ${session.access_token}`,
+            'ngrok-skip-browser-warning': 'true'
           }
         });
 

@@ -71,7 +71,10 @@ async function analyzeImage(preview: string, filename: string, t: (key: string) 
       
       const res = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'}/analyze`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { 
+          Authorization: `Bearer ${token}`,
+          "ngrok-skip-browser-warning": "true" 
+        },
         body: form,
       });
       
@@ -200,7 +203,8 @@ const Result = () => {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}`
+                'Authorization': `Bearer ${token}`,
+                'ngrok-skip-browser-warning': 'true'
               },
               body: JSON.stringify({
                 crop: a.crop,
