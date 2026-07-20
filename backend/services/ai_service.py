@@ -151,7 +151,7 @@ def _torch_predict(image_bytes: bytes) -> dict:
         import io
         import numpy as np
         
-        model, class_names = _load_torch_model()  # Will load PyTorch MobileNetV2
+        model, class_names = _load_efficientnet_model()  # Will load PyTorch MobileNetV2
         disease_info = _load_disease_info()
         
         if model is None or class_names is None:
@@ -569,9 +569,9 @@ def predict(image_bytes: Optional[bytes] = None, language: str = "en") -> dict:
     
     # 1. Try custom ML model first (PyTorch MobileNetV2 - PRIMARY METHOD)
     try:
-        print("[AI Pipeline] ✓ Step 1: Using PyTorch MobileNetV2 model (primary method)...")
+        print("[AI Pipeline] ✓ Step 1: Using Fine-tuned EfficientNet model (primary method)...")
         result = _torch_predict(image_bytes)
-        method_used = "PyTorch MobileNetV2 Model"
+        method_used = "Fine-tuned EfficientNet Model"
         print(f"[AI Pipeline] ✅ ML Model success: {result['crop']} / {result['disease']} ({result['confidence']}% confidence)")
     except Exception as e:
         print(f"[AI Pipeline] ❌ ML Model failed: {e}")
