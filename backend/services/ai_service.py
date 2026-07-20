@@ -95,15 +95,9 @@ def _load_efficientnet_model():
         return None, None
 
 def _load_torch_model():
-    """Load the legacy PyTorch MobileNetV2 model (fallback)"""
+    """Load the PyTorch MobileNetV2 model"""
     global _ML_MODEL, _CLASS_NAMES
     
-    # First try EfficientNet (preferred)
-    model, classes = _load_efficientnet_model()
-    if model is not None:
-        return model, classes
-    
-    # Fallback to PyTorch if EfficientNet fails
     try:
         import torch
         from torchvision import models
