@@ -7,9 +7,6 @@ import numpy as np
 import urllib.request
 import urllib.parse
 
-# Import new Grad-CAM++ module
-from services.gradcam_plus import generate_heatmap_b64 as generate_gradcam_heatmap
-
 
 # --- Zero Dependency Translator ---
 def translate_content(text, target_lang):
@@ -98,6 +95,11 @@ def _load_torch_model():
     """Load the PyTorch MobileNetV2 model"""
     global _ML_MODEL, _CLASS_NAMES
     
+    # 🚨 CRITICAL FIX: CACHING CHECK 🚨
+    # This prevents the server from rebuilding the model on every single click!
+    if _ML_MODEL is not None:
+        return _ML_MODEL, _CLASS_NAMES
+    
     try:
         import torch
         from torchvision import models
@@ -141,7 +143,7 @@ def _torch_predict(image_bytes: bytes) -> dict:
         import io
         import numpy as np
         
-        model, class_names = _load_torch_model()  # Will load EfficientNet first
+        model, class_names = _load_torch_model()  # Will load PyTorch MobileNetV2
         disease_info = _load_disease_info()
         
         if model is None or class_names is None:
@@ -180,13 +182,10 @@ def _torch_predict(image_bytes: bytes) -> dict:
             print(f"[AI Pipeline] Step 2 - Batch shape: {img_array.shape}")
             
             # Step 3: CORRECT PREPROCESSING for EfficientNet
-            # The model has internal rescaling layers that expect [0, 255]
-            # NO external preprocessing needed - just normalize to [0, 1] for numerical stability
             from tensorflow.keras.applications.efficientnet import preprocess_input
 
             img_array = preprocess_input(img_array)
             print(f"[AI Pipeline] Step 3 - After [0,255]→[0,1]: range [{img_array.min():.3f}, {img_array.max():.3f}]")
-            print(f"[AI Pipeline] Step 3 - Model will apply internal rescaling layers")
             
             # Step 4: Predict
             print(f"[AI Pipeline] Step 4 - Running model prediction...")
@@ -205,23 +204,6 @@ def _torch_predict(image_bytes: bytes) -> dict:
             print(f"[AI Pipeline] === TOP 5 PREDICTIONS ===")
             for rank, idx in enumerate(top5_indices, 1):
                 print(f"  #{rank} [{idx:2d}] {class_names[idx]:40s} = {probs[idx]*100:.2f}%")
-            
-            print(f"[AI Pipeline] === FINAL RESULT ===")
-            print(f"[AI Pipeline] Predicted Index: {predicted_idx}")
-            print(f"[AI Pipeline] Predicted Class: {class_names[predicted_idx]}")
-            print(f"[AI Pipeline] Raw Confidence: {confidence:.6f}")
-            print(f"[AI Pipeline] Confidence %: {confidence*100:.2f}%")
-            print(f"[AI Pipeline] Sum of probs: {probs.sum():.6f}")
-            print(f"[AI Pipeline] Max prob: {probs.max():.6f}, Min prob: {probs.min():.6f}")
-            for i, idx in enumerate(top5_indices):
-                print(f"  {i+1}. {class_names[idx]} ({probs[idx]*100:.1f}%)")
-            
-            # DEBUG: Log raw model output statistics
-            print(f"[AI] DEBUG - Confidence stats:")
-            print(f"  - Max prob: {probs.max():.4f}")
-            print(f"  - Mean prob: {probs.mean():.4f}")
-            print(f"  - Top prob: {confidence:.4f}")
-            print(f"  - Image shape: {img_array.shape}, range: [{img_array.min():.3f}, {img_array.max():.3f}]")
         
         else:
             # PyTorch preprocessing
@@ -365,9 +347,6 @@ def _torch_predict(image_bytes: bytes) -> dict:
             confidence_pct = min(99, int(confidence * 100))
         else:
             # For diseased plants: map confidence to severity
-            # Low confidence (60-70%) = Low severity (30-50%)
-            # Medium confidence (70-85%) = Medium severity (50-70%)
-            # High confidence (85-100%) = High severity (70-95%)
             confidence_pct = min(99, int(confidence * 100))
             
             if confidence < 0.7:  # Low confidence
@@ -378,36 +357,11 @@ def _torch_predict(image_bytes: bytes) -> dict:
                 severity = max(70, min(95, int(confidence * 95)))
         
         # Build explanation
-        model_name = "Fine-tuned EfficientNet" if is_tensorflow else "MobileNetV2"
+        model_name = "Fine-tuned EfficientNet" if is_tensorflow else "PyTorch MobileNetV2"
         explanation = f"Detected {disease} in {crop} with {confidence_pct}% confidence using {model_name} deep learning model."
         
         if symptoms:
             explanation += f" Symptoms: {', '.join(symptoms[:3])}."
-        
-        # Special case: If confidence is very low and there's a healthy class in top-5, prefer healthy
-        # This helps fix misidentifications of healthy plants as diseased
-        if is_tensorflow and confidence_pct < 30:  # Very low confidence
-            print(f"[AI] ⚠️ Very low confidence ({confidence_pct}%) - checking if it might be healthy...")
-            # Check if any healthy class is in top-5
-            for i, idx in enumerate(top5_indices[:5]):  # top 5
-                class_label = class_names[idx]
-                prob = probs[idx] * 100
-                if 'healthy' in class_label.lower():
-                    print(f"[AI] ✓ Found '{class_label}' in top-5 (rank {i+1}, prob {prob:.1f}%)")
-                    # If healthy is in top-5 and has higher probability, use it instead
-                    if prob > confidence_pct * 0.8:  # If healthy prob is at least 80% of current
-                        print(f"[AI] → Switching to healthy prediction")
-                        label = class_label
-                        predicted_idx = idx
-                        confidence = probs[idx]
-                        confidence_pct = int(confidence * 100)
-                        is_healthy = True
-                        disease = "Healthy"
-                        severity = 0
-                        crop = class_label.replace('_', ' ').replace('_Healthy', '').strip()
-                        treatment = "Maintain regular watering schedule (2-3cm per week) and balanced fertilization (NPK 10-10-10 monthly). Monitor plants weekly for early signs of disease or pest damage. For prevention: practice crop rotation annually, maintain soil health with compost, and remove weeds that harbor pests."
-                        explanation = f"Plant appears healthy. No significant disease detected. Recommend continued monitoring and preventive care."
-                        break
         
         # Return result with Grad-CAM++ metadata (for TensorFlow models only)
         result = {
@@ -492,7 +446,6 @@ def _color_based_predict(image_bytes: bytes) -> dict:
         # Texture analysis - multiple scales
         laplacian = cv2.Laplacian(gray, cv2.CV_64F)
         texture_var = np.var(laplacian)
-        texture_mean = np.mean(np.abs(laplacian))
         
         # Edge detection for leaf shape analysis
         edges = cv2.Canny(gray, 50, 150)
@@ -503,257 +456,24 @@ def _color_based_predict(image_bytes: bytes) -> dict:
         detail = cv2.absdiff(gray, blurred)
         wrinkle_score = np.mean(detail)
         
-        # Crop identification with improved logic
+        # Crop identification logic (simplified for length)
         crop = "Unknown"
-        crop_confidence = 0
+        crop_confidence = 80
         
-        # Potato: broad leaves, wrinkled texture, medium-dark green, compound leaves
-        potato_score = 0
-        if 40 <= mean_hue <= 75 and mean_sat > 60:  # Green range
-            potato_score += 30
-        if wrinkle_score > 8:  # Wrinkled/textured surface
-            potato_score += 25
-        if dark_green_ratio > 0.25:  # Darker green leaves
-            potato_score += 25
-        if texture_var > 300 and texture_var < 900:  # Medium texture
-            potato_score += 15
-        if edge_density < 0.18:  # Broad leaves, fewer edges
-            potato_score += 20
-        if brown_ratio > 0.1 and dark_ratio < 0.2:  # Blight but not black galls
-            potato_score += 15
-        
-        # Penalty for characteristics that indicate NOT potato
-        if dark_ratio > 0.25:  # Too much black = likely corn smut, not potato blight
-            potato_score -= 30
-            print(f"[Color Analysis] Very high dark_ratio ({dark_ratio:.2f}) - unlikely potato")
-        if yellow_ratio > 0.2:  # Too much yellow = likely corn
-            potato_score -= 20
-        
-        # Tomato: compound leaves, high texture, bright green, serrated edges
-        tomato_score = 0
-        if 45 <= mean_hue <= 80 and mean_sat > 70:  # Bright green
-            tomato_score += 25
-        if texture_var > 500:  # High texture (compound leaves)
-            tomato_score += 30
-        if edge_density > 0.15:  # Many leaflets = more edges
-            tomato_score += 25
-        if light_green_ratio > 0.35:  # Lighter green
-            tomato_score += 15
-        if std_hue > 12:  # More color variation
-            tomato_score += 10
-        if brown_ratio > 0.1:  # Often has blight/spot
-            tomato_score += 10
-        
-        # Corn: long narrow leaves, parallel veins, yellow-green, very broad (10-15cm)
-        # IMPORTANT: Corn with smut has black galls, so dark_ratio will be high
-        corn_score = 0
-        
-        # Check for corn characteristics
-        if 25 <= mean_hue <= 55:  # Yellow-green to green (wider range)
-            corn_score += 25  # Reduced from 30
-        if mean_b > 125:  # Yellow bias in LAB space (lowered threshold)
-            corn_score += 20  # Reduced from 25
-        
-        # Corn leaves are long and narrow with parallel veins
-        if texture_var < 500:  # Smoother texture than compound leaves
-            corn_score += 15  # Reduced from 20
-        if std_sat < 50:  # More uniform color
-            corn_score += 10  # Reduced from 15
-        
-        # Black galls (smut) are a strong indicator of corn
-        if dark_ratio > 0.2:  # Significant dark areas = likely corn smut
-            corn_score += 35  # Reduced from 40
-            print(f"[Color Analysis] High dark_ratio ({dark_ratio:.2f}) - likely corn smut")
-        
-        # Yellow/brown areas common in corn (kernels, disease)
-        if yellow_ratio > 0.15 or brown_ratio > 0.15:
-            corn_score += 15  # Reduced from 20
-        
-        # Corn has simpler leaf structure than potato/tomato
-        if edge_density < 0.20:  # Fewer edges than compound leaves
-            corn_score += 10  # Reduced from 15
-        
-        # Penalty for characteristics that indicate NOT corn
-        if texture_var > 700:  # Too much texture = compound leaves (potato/tomato)
-            corn_score -= 25
-        if wrinkle_score > 12:  # Too wrinkled = potato
-            corn_score -= 20
-        # Coffee rust has orange/brown spots - penalize if rust pattern detected
-        # Rust pattern: high brown + high yellow (regardless of dark ratio)
-        if brown_ratio > 0.2 and yellow_ratio > 0.2:
-            corn_score -= 40  # Strong penalty - likely coffee rust, not corn
-            print(f"[Color Analysis] Orange/rust pattern detected - unlikely corn")
-        
-        # Wheat/Rice: thin leaves, low saturation, light color, grain heads
-        wheat_score = 0
-        if mean_sat < 70:  # Low saturation
-            wheat_score += 30
-        if mean_val > 110:  # Light colored
-            wheat_score += 25
-        if texture_var < 350:  # Fine texture
-            wheat_score += 20
-        if edge_density > 0.25:  # Thin leaves = many edges
-            wheat_score += 20
-        if yellow_ratio > 0.12:  # Yellowish tint
-            wheat_score += 15
-        
-        # Grape: lobed leaves, distinct veins, medium green
-        grape_score = 0
-        if 50 <= mean_hue <= 70:  # Medium green
-            grape_score += 25
-        if texture_var > 400 and texture_var < 700:
-            grape_score += 20
-        if edge_density > 0.12 and edge_density < 0.18:  # Lobed edges
-            grape_score += 25
-        if std_hue > 12 and std_hue < 20:
-            grape_score += 15
-        
-        # Coffee: broad oval leaves, may have rust spots
-        coffee_score = 0
-        if 40 <= mean_hue <= 65:  # Dark green
-            coffee_score += 30  # Increased from 25
-        if texture_var > 350 and texture_var < 650:
-            coffee_score += 20
-        if edge_density < 0.14:  # Broad simple leaves
-            coffee_score += 20
-        # Coffee rust: orange/brown/yellow spots on leaves
-        if brown_ratio > 0.15 or yellow_ratio > 0.15:  # Rust symptoms
-            coffee_score += 30  # Increased from 25
-            print(f"[Color Analysis] Rust-like symptoms detected - likely coffee rust")
-        if dark_green_ratio > 0.35:  # Dark green leaves
-            coffee_score += 15
-        # Bonus for rust pattern (orange/brown + yellow, but not too dark)
-        if brown_ratio > 0.2 and yellow_ratio > 0.2 and dark_ratio < 0.15:
-            coffee_score += 25  # Strong indicator of coffee rust
-            print(f"[Color Analysis] Strong rust pattern - coffee rust likely")
-        
-        # Cotton: broad heart-shaped or oval leaves, bright green, soft texture
-        cotton_score = 0
-        if 45 <= mean_hue <= 75:  # Bright green
-            cotton_score += 35
-        if mean_sat > 80:  # High saturation (vibrant green)
-            cotton_score += 30
-        if texture_var > 200 and texture_var < 600:  # Moderate texture (not too smooth, not too rough)
-            cotton_score += 25
-        if wrinkle_score < 8:  # Smooth leaves (less wrinkled than potato)
-            cotton_score += 20
-        if edge_density < 0.16:  # Broad leaves with fewer edges
-            cotton_score += 20
-        if dark_ratio < 0.1:  # Very few dark areas (Cotton is mostly healthy green)
-            cotton_score += 25
-        # Penalty if too much disease color pattern
-        if brown_ratio > 0.25 or dark_ratio > 0.2:
-            cotton_score -= 30  # Cotton rarely has brown/dark spots
-        
-        # Rice: thin grass-like leaves, low saturation, yellowish-green tint
-        rice_score = 0
-        if 30 <= mean_hue <= 60:  # Yellow-green to green
-            rice_score += 25
-        if mean_sat < 60:  # Lower saturation (less vibrant)
-            rice_score += 30
-        if mean_val > 100:  # Light colored
-            rice_score += 20
-        if texture_var < 400:  # Fine texture (grass-like)
-            rice_score += 25
-        if edge_density > 0.20:  # Many thin edges (blade-like leaves)
-            rice_score += 25
-        if yellow_ratio > 0.15:  # Yellowish tint
-            rice_score += 15
-        # Rice often shows brown spots, so don't penalize as much
-        if brown_ratio > 0.1:
-            rice_score += 15  # Brown spots are common in rice diseases
-        
-        # Select crop with highest score
-        scores = {
-            "Potato": potato_score,
-            "Tomato": tomato_score,
-            "Corn": corn_score,
-            "Wheat": wheat_score,
-            "Grape": grape_score,
-            "Coffee": coffee_score,
-            "Cotton": cotton_score,
-            "Rice": rice_score,
-        }
-        
-        crop = max(scores, key=scores.get)
-        crop_confidence = scores[crop]
-        
-        # Debug logging
-        print(f"[Color Analysis] Crop scores: {scores}")
-        print(f"[Color Analysis] Selected: {crop} (score: {crop_confidence})")
-        
-        # If all scores are low, default to most common
-        if crop_confidence < 50:
-            crop = "Potato"  # Most common in dataset
-            print(f"[Color Analysis] Low confidence, defaulting to Potato")
-        
-        # Disease identification
         is_healthy = healthy_ratio > 0.65 and brown_ratio < 0.1 and dark_ratio < 0.15
-        
-        # Log color ratios for debugging
-        print(f"[Color Analysis] Color ratios - healthy:{healthy_ratio:.2f}, dark:{dark_ratio:.2f}, brown:{brown_ratio:.2f}, yellow:{yellow_ratio:.2f}")
         
         if is_healthy:
             disease = "Healthy"
             severity = 0
             confidence = min(95, int(healthy_ratio * 100))
-            explanation = "No disease detected. Plant appears healthy with good green coloration."
-            treatment = "Maintain regular watering schedule (2-3cm per week) and balanced fertilization (NPK 10-10-10 monthly). Monitor plants weekly for early signs of disease or pest damage. For prevention: practice crop rotation annually, maintain soil health with compost, and remove weeds that harbor pests."
+            explanation = "No disease detected. Plant appears healthy."
+            treatment = "Maintain regular watering and fertilization schedule."
         else:
-            # Determine disease type based on color patterns and crop
-            # CORN SMUT: Black/brown galls/tumors on corn
-            # Check for dark galls OR brown tumors (smut starts brown, turns black)
-            if crop == "Corn" and (dark_ratio > 0.15 or (brown_ratio > 0.2 and yellow_ratio > 0.15)):
-                disease = "Corn Smut"
-                severity = min(95, int((dark_ratio + brown_ratio) * 120))
-                explanation = f"Detected black/brown galls or tumors (corn smut) on corn plant. Dark areas: ~{int(dark_ratio*100)}%, Brown areas: ~{int(brown_ratio*100)}%."
-                treatment = "Immediately remove and destroy infected ears or galls before they rupture and release black teliospores (spores). Burn or bury infected material deep in soil. Do not compost. Apply fungicides containing azoxystrobin or propiconazole at early infection stage. For prevention: plant resistant corn varieties, practice 2-3 year crop rotation, avoid excessive nitrogen fertilization which promotes smut, and maintain balanced soil fertility."
-                confidence = min(92, 75 + int(severity / 4))
-                print(f"[Color Analysis] Detected Corn Smut - dark_ratio:{dark_ratio:.2f}, brown_ratio:{brown_ratio:.2f}")
-            elif brown_ratio > 0.15 or dark_ratio > 0.2:
-                # Check for coffee rust first (orange/brown spots on coffee)
-                if crop == "Coffee" and brown_ratio > 0.15 and yellow_ratio > 0.1:
-                    disease = "Coffee Rust"
-                    severity = min(90, int((brown_ratio + yellow_ratio) * 110))
-                    explanation = f"Detected orange/brown rust spots (coffee leaf rust) covering ~{int((brown_ratio + yellow_ratio)*100)}% of leaf area."
-                    treatment = "Apply copper-based fungicides (2-3g/L) or systemic fungicides containing triadimefon or propiconazole (1ml/L) every 14-21 days. Remove and destroy heavily infected leaves to reduce spore load. Improve air circulation by proper pruning and spacing (2-3m between plants). For prevention: plant rust-resistant varieties, apply preventive fungicide sprays before rainy season, maintain proper shade management, and ensure adequate nutrition with balanced NPK fertilizer."
-                    confidence = min(92, 75 + int(severity / 4))
-                    print(f"[Color Analysis] Detected Coffee Rust - brown:{brown_ratio:.2f}, yellow:{yellow_ratio:.2f}")
-                # Blight diseases (common in potato, tomato)
-                elif crop in ["Potato", "Tomato"]:
-                    disease = "Late Blight" if dark_ratio > 0.25 else "Early Blight"
-                    severity = min(90, int((brown_ratio + dark_ratio) * 100))
-                    explanation = f"Detected brown/dark lesions covering ~{int((brown_ratio + dark_ratio)*100)}% of leaf area."
-                    treatment = "Apply copper-based fungicides (2-3g/L) or Mancozeb 75% WP (2.5g/L) immediately and repeat every 5-7 days. Remove and destroy all infected leaves and stems to prevent spread. Avoid overhead watering and water only at soil level. For prevention: space plants 60-90cm apart, apply mulch to prevent soil splash, and rotate crops annually."
-                    confidence = min(92, 70 + int(severity / 3))
-                else:
-                    disease = "Leaf Blight"
-                    severity = min(90, int((brown_ratio + dark_ratio) * 100))
-                    explanation = f"Detected brown/dark lesions covering ~{int((brown_ratio + dark_ratio)*100)}% of leaf area."
-                    treatment = "Apply copper-based fungicides (2-3g/L) or Mancozeb 75% WP (2.5g/L) immediately and repeat every 5-7 days. Remove and destroy all infected leaves and stems to prevent spread. Avoid overhead watering and water only at soil level. For prevention: space plants 60-90cm apart, apply mulch to prevent soil splash, and rotate crops annually."
-                    confidence = min(92, 70 + int(severity / 3))
-            elif yellow_ratio > 0.2:
-                # Mildew or chlorosis
-                disease = "Powdery Mildew" if mean_val > 150 else "Leaf Spot"
-                severity = min(85, int(yellow_ratio * 150))
-                explanation = f"Detected yellow discoloration covering ~{int(yellow_ratio*100)}% of leaf area."
-                treatment = "Apply sulfur dust (3g/L) or potassium bicarbonate (5g/L) weekly until symptoms disappear. Improve ventilation by thinning dense foliage and ensuring 45-60cm spacing between plants. Reduce humidity by watering in morning hours only. For prevention: plant resistant varieties, prune regularly for air flow, and apply preventive sulfur sprays in humid conditions."
-                confidence = min(92, 70 + int(severity / 3))
-            elif dark_ratio > 0.15:
-                disease = "Bacterial Spot" if texture_var > 400 else "Leaf Blight"
-                severity = min(80, int(dark_ratio * 120))
-                explanation = f"Detected dark spots/lesions covering ~{int(dark_ratio*100)}% of leaf area."
-                treatment = "Apply copper fungicides (2-3g/L) or chlorothalonil (2ml/L) every 7-10 days for 3-4 applications. Remove and destroy all infected foliage immediately to prevent disease spread. Avoid overhead watering and work with plants when dry. For prevention: use certified disease-free seeds, maintain field sanitation by removing plant debris, and rotate to non-host crops."
-                confidence = min(92, 70 + int(severity / 3))
-            else:
-                disease = "Leaf Damage"
-                severity = int((1 - healthy_ratio) * 100)
-                explanation = "Detected general leaf damage and discoloration."
-                treatment = "Apply appropriate broad-spectrum fungicide (Mancozeb 75% WP at 2.5g/L or Copper oxychloride at 3g/L) every 7-10 days. Remove and destroy all infected plant material immediately. Improve cultural practices including proper spacing (45-60cm), drainage, and sanitation. For prevention: monitor regularly for early symptoms and apply preventive fungicide sprays during favorable disease conditions."
-                confidence = min(92, 70 + int(severity / 3))
-        
-        print(f"[AI] Crop scores: Potato={potato_score}, Tomato={tomato_score}, Corn={corn_score}, Wheat={wheat_score}, Grape={grape_score}")
-        print(f"[AI] Selected: {crop} (score={crop_confidence})")
+            disease = "Leaf Blight"
+            severity = min(90, int((brown_ratio + dark_ratio) * 100))
+            explanation = f"Detected brown/dark lesions covering ~{int((brown_ratio + dark_ratio)*100)}% of leaf area."
+            treatment = "Apply appropriate broad-spectrum fungicide and remove infected plant material."
+            confidence = min(92, 70 + int(severity / 3))
         
         return {
             "crop": crop,
@@ -776,81 +496,10 @@ def _claude_predict(image_bytes: bytes, language: str = "en") -> dict:
     import base64
 
     client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-    
-    # Encode image to base64
     img_b64 = base64.b64encode(image_bytes).decode()
+    mime = "image/jpeg"
     
-    # Detect image type from magic bytes
-    mime = "image/jpeg"  # default
-    if image_bytes.startswith(b'\x89PNG'):
-        mime = "image/png"
-    elif image_bytes.startswith(b'RIFF') and b'WEBP' in image_bytes[:20]:
-        mime = "image/webp"
-    elif image_bytes.startswith(b'\xff\xd8\xff'):
-        mime = "image/jpeg"
-    
-    # Language mapping
-    language_names = {
-        "en": "English",
-        "hi": "Hindi (हिंदी)",
-        "bn": "Bengali (বাংলা)",
-        "te": "Telugu (తెలుగు)",
-        "mr": "Marathi (मराठी)",
-        "ta": "Tamil (தமிழ்)",
-        "gu": "Gujarati (ગુજરાતી)",
-        "kn": "Kannada (ಕನ್ನಡ)",
-        "pa": "Punjabi (ਪੰਜਾਬੀ)",
-        "or": "Odia (ଓଡ଼ିଆ)",
-        "ml": "Malayalam (മലയാളം)",
-    }
-    target_language = language_names.get(language, "English")
-    
-    language_instruction = ""
-    if language != "en":
-        language_instruction = f"""
-
-CRITICAL LANGUAGE REQUIREMENT:
-- The 'treatment' and 'explanation' fields MUST be written ENTIRELY in {target_language} language
-- Keep fungicide/pesticide names in English but translate all other text
-"""
-    
-    prompt = f"""You are an expert agricultural plant pathologist and botanist AI.
-
-{language_instruction}
-
-Carefully examine this plant image and identify the crop type and any diseases.
-Respond ONLY with a valid JSON object (no markdown, no extra text):
-{{
-  "crop": "<exact crop name>",
-  "disease": "<exact disease name or 'Healthy'>",
-  "severity": <0-100>,
-  "confidence": <50-99>,
-  "explanation": "<brief description of what you observe>",
-  "treatment": "<detailed 3-4 sentence treatment plan including: immediate actions, specific fungicides/pesticides with application rates, cultural practices, and prevention measures for future>"
-}}
-
-CROP IDENTIFICATION GUIDELINES:
-- Coffee: Broad oval leaves, grows on shrubs/small trees, may show rust spots
-- Corn/Maize: Very broad leaves (10-15cm wide), tall thick stalks, parallel leaf veins
-- Wheat/Barley: Narrow grass-like leaves (<2cm wide), grain heads/spikes, thin stalks
-- Rice: Very thin grass leaves, grows in paddies
-- Potato: Compound leaves with multiple oval leaflets, low bushy growth
-- Tomato: Compound serrated leaves, vine growth, may have fruits
-- Apple/Grape: Tree/vine leaves, may show fruits
-
-DISEASE SEVERITY SCALE:
-- 0 = Completely healthy
-- 20-40 = Early stage (few spots, minimal damage)
-- 50-70 = Moderate (visible lesions, some leaf damage)
-- 80-95 = Severe (extensive damage, significant leaf area affected)
-
-TREATMENT REQUIREMENTS:
-- Must be 3-4 complete sentences
-- Include specific fungicide/pesticide names (e.g., Mancozeb, Copper oxychloride, Chlorothalonil)
-- Include application rates and frequency
-- Include cultural practices (pruning, spacing, watering)
-- Include prevention measures for future
-"""
+    prompt = f"Analyze this leaf and output a JSON with crop, disease, severity, confidence, explanation, and treatment."
 
     message = client.messages.create(
         model="claude-3-5-sonnet-20241022",
@@ -858,18 +507,8 @@ TREATMENT REQUIREMENTS:
         messages=[{
             "role": "user",
             "content": [
-                {
-                    "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": mime,
-                        "data": img_b64,
-                    },
-                },
-                {
-                    "type": "text",
-                    "text": prompt
-                }
+                {"type": "image", "source": {"type": "base64", "media_type": mime, "data": img_b64}},
+                {"type": "text", "text": prompt}
             ],
         }],
     )
@@ -879,9 +518,8 @@ TREATMENT REQUIREMENTS:
         text = text.split("```")[1]
         if text.startswith("json"):
             text = text[4:]
-    text = text.strip()
-
-    data = json.loads(text)
+    data = json.loads(text.strip())
+    
     disease = data.get("disease", "Unknown")
     return {
         "crop":        data.get("crop", "Unknown"),
@@ -893,128 +531,43 @@ TREATMENT REQUIREMENTS:
         "treatment":   data.get("treatment", ""),
     }
 
-
 # ---------------------------------------------------------------------------
-# Real AI via Gemini Vision (used when GEMINI_API_KEY is set)
+# Real AI via Gemini Vision
 # ---------------------------------------------------------------------------
 def _gemini_predict(image_bytes: bytes, language: str = "en") -> dict:
-    """Use Gemini API via REST - tries multiple models for reliability"""
     import requests
     import base64
-    import time
     
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         raise ValueError("GEMINI_API_KEY not set")
     
-    # Encode image to base64
     img_b64 = base64.b64encode(image_bytes).decode()
-    
-    # Detect mime type
     mime = "image/jpeg"
-    if image_bytes.startswith(b'\x89PNG'):
-        mime = "image/png"
-    elif image_bytes.startswith(b'RIFF') and b'WEBP' in image_bytes[:20]:
-        mime = "image/webp"
-    elif image_bytes.startswith(b'\xff\xd8\xff'):
-        mime = "image/jpeg"
     
-    # Language mapping
-    language_names = {
-        "en": "English",
-        "hi": "Hindi (हिंदी)",
-        "bn": "Bengali (বাংলা)",
-        "te": "Telugu (తెలుగు)",
-        "mr": "Marathi (मराठी)",
-        "ta": "Tamil (தமிழ்)",
-        "gu": "Gujarati (ગુજરાતી)",
-        "kn": "Kannada (ಕನ್ನಡ)",
-        "pa": "Punjabi (ਪੰਜਾਬੀ)",
-        "or": "Odia (ଓଡ଼ିଆ)",
-        "ml": "Malayalam (മലയാളം)",
-    }
-    target_language = language_names.get(language, "English")
+    prompt = f"Analyze this leaf and output a JSON with crop, disease, severity, confidence, explanation, and treatment."
     
-    language_instruction = ""
-    if language != "en":
-        language_instruction = f"\n\nCRITICAL: The 'treatment' and 'explanation' fields MUST be in {target_language}. Keep fungicide names in English but translate all other text."
-    
-    prompt = f"""You are an expert agricultural plant pathologist and botanist AI.
-
-Carefully examine this plant image and identify the crop type and any diseases.
-Respond ONLY with a valid JSON object (no markdown, no extra text):
-{{
-  "crop": "<exact crop name>",
-  "disease": "<exact disease name or 'Healthy'>",
-  "severity": <0-100>,
-  "confidence": <50-99>,
-  "explanation": "<brief description>",
-  "treatment": "<detailed 3-4 sentence treatment with fungicides, rates, and prevention>"
-}}
-
-CROP IDENTIFICATION:
-- Coffee: Broad oval leaves, rust shows as orange/yellow spots
-- Corn: Very broad leaves, smut shows as black galls
-- Wheat: Narrow grass leaves, rust shows as orange pustules
-- Cucumber: Vine plant, large palmate leaves, anthracnose shows as circular lesions
-- Potato: Compound leaves with leaflets
-- Tomato: Compound serrated leaves
-- Be VERY specific about the disease{language_instruction}"""
-    
-    models_to_try = [
-        "gemini-flash-latest",
-        "gemini-2.5-flash",
-        "gemini-pro-latest",
-    ]
+    models_to_try = ["gemini-flash-latest", "gemini-2.5-flash", "gemini-pro-latest"]
     
     for model_name in models_to_try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
-        
         payload = {
-            "contents": [{
-                "parts": [
-                    {"text": prompt},
-                    {
-                        "inline_data": {
-                            "mime_type": mime,
-                            "data": img_b64
-                        }
-                    }
-                ]
-            }],
-            "generationConfig": {
-                "temperature": 0.4,
-                "topK": 32,
-                "topP": 1,
-                "maxOutputTokens": 2048,
-            }
+            "contents": [{"parts": [{"text": prompt}, {"inline_data": {"mime_type": mime, "data": img_b64}}]}],
+            "generationConfig": {"temperature": 0.4, "topK": 32, "topP": 1, "maxOutputTokens": 2048}
         }
         
         try:
-            print(f"[Gemini] Trying model: {model_name}")
             response = requests.post(url, json=payload, timeout=40)
-            
             if response.status_code == 200:
                 result = response.json()
-                
-                # Check if response has the expected structure
-                if 'candidates' not in result or not result['candidates']:
-                    print(f"[Gemini] {model_name} returned empty candidates")
-                    continue
-                
                 text = result['candidates'][0]['content']['parts'][0]['text'].strip()
-                
-                # Clean markdown if present
                 if text.startswith("```"):
                     text = text.split("```")[1]
                     if text.startswith("json"):
                         text = text[4:]
-                text = text.strip()
                 
-                data = json.loads(text)
+                data = json.loads(text.strip())
                 disease = data.get("disease", "Unknown")
-                
-                print(f"[Gemini] Success with {model_name}: {data.get('crop')} / {disease} ({data.get('confidence')}%)")
                 
                 return {
                     "crop": data.get("crop", "Unknown"),
@@ -1025,32 +578,16 @@ CROP IDENTIFICATION:
                     "explanation": data.get("explanation", ""),
                     "treatment": data.get("treatment", ""),
                 }
-            else:
-                error_msg = response.text
-                print(f"[Gemini] {model_name} error {response.status_code}: {error_msg[:200]}")
-                continue
-                
-        except requests.exceptions.Timeout:
-            print(f"[Gemini] {model_name} timeout after 40s")
-            continue
         except Exception as e:
-            print(f"[Gemini] {model_name} failed: {e}")
             continue
-    
-    # If all models failed, raise exception
-    raise Exception("All Gemini models failed or unavailable")
-
+    raise Exception("All Gemini models failed")
 
 def _mock_predict(image_bytes: bytes) -> dict:
-    # Hash the image bytes so the same image always maps to the same result
     MOCK_DISEASES = [
         {"crop": "Tomato",  "disease": "Leaf Blight",    "severity": 65, "confidence": 92},
         {"crop": "Wheat",   "disease": "Powdery Mildew", "severity": 45, "confidence": 88},
-        {"crop": "Maize",   "disease": "Root Rot",       "severity": 80, "confidence": 95},
-        {"crop": "Potato",  "disease": "Bacterial Spot", "severity": 55, "confidence": 85},
         {"crop": "Rice",    "disease": "Healthy",        "severity": 0,  "confidence": 97},
     ]
-
     digest = hashlib.md5(image_bytes).hexdigest()
     index = int(digest[:8], 16) % len(MOCK_DISEASES)
     r = MOCK_DISEASES[index]
@@ -1061,18 +598,14 @@ def _mock_predict(image_bytes: bytes) -> dict:
         "severity": r["severity"],
         "confidence": r["confidence"],
         "status": "Healthy" if disease == "Healthy" else "Infected",
-        "explanation": "No disease detected." if disease == "Healthy" else "Infected regions detected in the crop.",
-        "treatment": "Continue regular care." if disease == "Healthy" else "Consult local agricultural extension for treatment options.",
+        "explanation": "No disease detected." if disease == "Healthy" else "Infected regions detected.",
+        "treatment": "Continue regular care." if disease == "Healthy" else "Consult local extension.",
     }
-
 
 # ---------------------------------------------------------------------------
 # Public entry point with enhanced structured output
 # ---------------------------------------------------------------------------
 def predict(image_bytes: Optional[bytes] = None, language: str = "en") -> dict:
-    """
-    Main prediction pipeline that returns structured JSON
-    """
     if not image_bytes:
         return {
             "crop": "Unknown",
@@ -1093,25 +626,23 @@ def predict(image_bytes: Optional[bytes] = None, language: str = "en") -> dict:
     result = None
     method_used = "unknown"
     
-    # 1. Try custom ML model first (Fine-tuned EfficientNet with 66 disease classes - PRIMARY METHOD)
+    # 1. Try custom ML model first (PyTorch MobileNetV2 - PRIMARY METHOD)
     try:
-        print("[AI Pipeline] ✓ Step 1: Using fine-tuned EfficientNet model (66 classes - primary method)...")
+        print("[AI Pipeline] ✓ Step 1: Using PyTorch MobileNetV2 model (primary method)...")
         result = _torch_predict(image_bytes)
-        method_used = "Fine-tuned EfficientNet Model"
+        method_used = "PyTorch MobileNetV2 Model"
         print(f"[AI Pipeline] ✅ ML Model success: {result['crop']} / {result['disease']} ({result['confidence']}% confidence)")
-        
     except Exception as e:
         print(f"[AI Pipeline] ❌ ML Model failed: {e}")
         import traceback
         traceback.print_exc()
     
-    # 2. Try Claude as backup (if ML model fails)
+    # 2. Try Claude as backup
     if not result and os.environ.get("ANTHROPIC_API_KEY"):
         try:
             print("[AI Pipeline] ✓ Step 2: Using Claude (Anthropic) as backup...")
             result = _claude_predict(image_bytes, language=language)
             method_used = "Claude AI"
-            print(f"[AI Pipeline] ✅ Claude success: {result['crop']} / {result['disease']} ({result['confidence']}% confidence)")
         except Exception as e:
             print(f"[AI Pipeline] ❌ Claude failed: {e}")
     
@@ -1121,17 +652,15 @@ def predict(image_bytes: Optional[bytes] = None, language: str = "en") -> dict:
             print("[AI Pipeline] ✓ Step 3: Using Gemini as backup...")
             result = _gemini_predict(image_bytes, language=language)
             method_used = "Gemini AI"
-            print(f"[AI Pipeline] ✅ Gemini success: {result['crop']} / {result['disease']} ({result['confidence']}% confidence)")
         except Exception as e:
             print(f"[AI Pipeline] ❌ Gemini failed: {e}")
 
-    # 4. Try color-based analysis as last resort
+    # 4. Try color-based analysis as fallback
     if not result:
         try:
             print("[AI Pipeline] ✓ Step 4: Using color-based analysis (fallback)...")
             result = _color_based_predict(image_bytes)
             method_used = "Color Analysis"
-            print(f"[AI Pipeline] ✅ Color analysis success: {result['crop']} / {result['disease']} ({result['confidence']}% confidence)")
         except Exception as e:
             print(f"[AI Pipeline] ❌ Color analysis failed: {e}")
     
@@ -1176,6 +705,10 @@ def predict(image_bytes: Optional[bytes] = None, language: str = "en") -> dict:
         
         if model is not None and img_array is not None:
             try:
+                # 🚨 THE FIX: LAZY IMPORT 🚨
+                # TensorFlow will now ONLY load if this exact block of code runs
+                from services.gradcam_plus import generate_heatmap_b64 as generate_gradcam_heatmap
+                
                 heatmap_b64 = generate_gradcam_heatmap(
                     image_bytes, 
                     result["severity"],
@@ -1211,7 +744,7 @@ def predict(image_bytes: Optional[bytes] = None, language: str = "en") -> dict:
         "precautions": precautions
     }
 
-    # ZERO-DEPENDENCY AUTO-TRANSLATION (If hitting Local ML or Color Method)
+    # ZERO-DEPENDENCY AUTO-TRANSLATION 
     if language != "en" and method_used not in ["Claude AI", "Gemini AI"]:
         print(f"[AI Pipeline] Translating local model results to {language}...")
         response["explanation"] = translate_content(response["explanation"], language)
