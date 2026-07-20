@@ -95,8 +95,7 @@ def _load_torch_model():
     """Load the PyTorch MobileNetV2 model"""
     global _ML_MODEL, _CLASS_NAMES
     
-    # 🚨 CRITICAL FIX: CACHING CHECK 🚨
-    # This prevents the server from rebuilding the model on every single click!
+    # CRITICAL FIX: CACHING CHECK
     if _ML_MODEL is not None:
         return _ML_MODEL, _CLASS_NAMES
     
@@ -116,11 +115,12 @@ def _load_torch_model():
         with open(class_path_legacy, 'r') as f:
             _CLASS_NAMES = json.load(f)
         
-        # Build model architecture (same as training)
+        # Build model architecture 
         model = models.mobilenet_v2(weights=None)
         model.classifier[1] = nn.Sequential(
             nn.Dropout(0.2),
-            nn.Linear(model.classifier[1].in_features, len(_CLASS_NAMES))
+            # 🚨 FIXED: Changed from len(_CLASS_NAMES) to 38 to match your model weights checkpoint!
+            nn.Linear(model.classifier[1].in_features, 38)
         )
         
         # Load trained weights
@@ -128,7 +128,7 @@ def _load_torch_model():
         model.eval()
         
         _ML_MODEL = model
-        print(f"[AI] PyTorch MobileNetV2 model loaded with {len(_CLASS_NAMES)} classes")
+        print(f"[AI] PyTorch MobileNetV2 model loaded successfully with 38 classes")
         return _ML_MODEL, _CLASS_NAMES
     except Exception as e:
         print(f"[AI] Failed to load PyTorch model: {e}")
@@ -241,18 +241,11 @@ def _torch_predict(image_bytes: bytes) -> dict:
         print(f"[AI] Selected prediction: {label} ({confidence*100:.1f}%)")
         
         # Parse label - handle different formats
-        # Format 1: "Crop___Disease" (e.g., "Tomato___Late_blight")
-        # Format 2: "Crop_Disease" (e.g., "Tomato_Late_Blight", "Cotton_Healthy")
-        # Format 3: "Disease" only (e.g., "Aphid", "Blast")
-        
         if '___' in label:
-            # Standard format: Crop___Disease
             parts = label.split('___')
             crop = parts[0].replace('_', ' ').replace('(', '').replace(')', '').strip()
             disease_raw = parts[1].replace('_', ' ').strip() if len(parts) > 1 else "Unknown"
         elif '_' in label:
-            # Format: Crop_Disease
-            # Find the crop name - check for known crops first
             found = False
             for crop_name in ['Cotton', 'Tomato', 'Potato', 'Rice', 'Wheat', 'Corn', 'Apple', 'Grape', 'Orange', 'Peach', 'Pepper', 'Raspberry', 'Blueberry', 'Strawberry', 'Squash', 'Soybean', 'Cherry']:
                 if label.startswith(crop_name):
@@ -265,8 +258,7 @@ def _torch_predict(image_bytes: bytes) -> dict:
                 crop = "Unknown"
                 disease_raw = label.replace('_', ' ')
         else:
-            # Disease only format (Aphid, Blast, Smut, etc.)
-            crop = "General"  # Will be refined from disease_info
+            crop = "General"
             disease_raw = label.replace('_', ' ')
         
         is_healthy = 'healthy' in disease_raw.lower()
@@ -277,40 +269,32 @@ def _torch_predict(image_bytes: bytes) -> dict:
         symptoms = []
         prevention = []
         
-        # Try to find exact match in disease_info
         if label in disease_info:
             info = disease_info[label]
-            crop = info.get('crop', crop)  # Override with more accurate crop name
+            crop = info.get('crop', crop)
             disease = info.get('disease', disease)
             symptoms = info.get('symptoms', [])
             prevention = info.get('prevention', [])
             treatment_list = info.get('treatment', [])
             
-            # Build detailed treatment from knowledge base with proper formatting
             treatment_parts = []
-            
             if treatment_list:
-                # Format treatment as a proper sentence with "Apply" prefix
                 if len(treatment_list) == 1:
                     treatment_parts.append(f"Apply {treatment_list[0]} fungicide immediately.")
                 else:
-                    # Join multiple treatments with commas
                     treatments_str = ", ".join(treatment_list[:-1]) + f", or {treatment_list[-1]}"
                     treatment_parts.append(f"Treatment: Apply {treatments_str} according to label instructions.")
             
             if prevention:
-                # Add prevention as a separate sentence
                 if len(prevention) == 1:
                     treatment_parts.append(f"Prevention: {prevention[0]}.")
                 elif len(prevention) == 2:
                     treatment_parts.append(f"Prevention: {prevention[0]} and {prevention[1].lower()}.")
                 else:
-                    # Take top 3 prevention measures
                     prev_str = ", ".join(prevention[:2]) + f", and {prevention[2].lower()}"
                     treatment_parts.append(f"Prevention: {prev_str}.")
             
             if symptoms:
-                # Add symptoms information
                 if len(symptoms) <= 2:
                     symp_str = " and ".join(symptoms)
                 else:
@@ -319,7 +303,6 @@ def _torch_predict(image_bytes: bytes) -> dict:
             
             treatment = " ".join(treatment_parts)
         
-        # Fallback treatment if not found in knowledge base
         if not treatment:
             treatments = {
                 "scab": "Apply fungicides (captan or myclobutanil) at bud break. Remove infected leaves.",
@@ -340,30 +323,24 @@ def _torch_predict(image_bytes: bytes) -> dict:
                 "Apply appropriate fungicide or pesticide based on disease type. Remove infected plant material. Consult local agricultural extension for specific treatment."
             )
         
-        # Calculate severity based on confidence and disease type
-        # IMPORTANT: Healthy plants should have 0% severity, regardless of confidence
         if is_healthy:
             severity = 0
             confidence_pct = min(99, int(confidence * 100))
         else:
-            # For diseased plants: map confidence to severity
             confidence_pct = min(99, int(confidence * 100))
-            
-            if confidence < 0.7:  # Low confidence
+            if confidence < 0.7:
                 severity = max(30, min(50, int(confidence * 70)))
-            elif confidence < 0.85:  # Medium confidence
+            elif confidence < 0.85:
                 severity = max(50, min(70, int(confidence * 80)))
-            else:  # High confidence
+            else:
                 severity = max(70, min(95, int(confidence * 95)))
         
-        # Build explanation
         model_name = "Fine-tuned EfficientNet" if is_tensorflow else "PyTorch MobileNetV2"
         explanation = f"Detected {disease} in {crop} with {confidence_pct}% confidence using {model_name} deep learning model."
         
         if symptoms:
             explanation += f" Symptoms: {', '.join(symptoms[:3])}."
         
-        # Return result with Grad-CAM++ metadata (for TensorFlow models only)
         result = {
             "crop": crop,
             "disease": disease,
@@ -374,7 +351,6 @@ def _torch_predict(image_bytes: bytes) -> dict:
             "treatment": treatment,
         }
         
-        # Add Grad-CAM++ metadata for TensorFlow models
         if is_tensorflow and img_array is not None:
             result["_gradcam_model"] = model
             result["_gradcam_img_array"] = img_array
@@ -400,66 +376,23 @@ def _color_based_predict(image_bytes: bytes) -> dict:
         from PIL import Image
         import io
         
-        # Load image
         nparr = np.frombuffer(image_bytes, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         if img is None:
             raise ValueError("Could not decode image")
         
-        h, w = img.shape[:2]
-        
-        # Convert to multiple color spaces for better analysis
         hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-        lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         
-        h_chan, s_chan, v_chan = cv2.split(hsv)
-        l_chan, a_chan, b_chan = cv2.split(lab)
-        
-        # Calculate comprehensive color statistics
-        mean_hue = np.mean(h_chan)
-        mean_sat = np.mean(s_chan)
-        mean_val = np.mean(v_chan)
-        std_hue = np.std(h_chan)
-        std_sat = np.std(s_chan)
-        
-        # LAB color space analysis (better for disease detection)
-        mean_a = np.mean(a_chan)  # green-red axis
-        mean_b = np.mean(b_chan)  # blue-yellow axis
-        
-        # Detect different color regions
         healthy_green = cv2.inRange(hsv, np.array([35, 40, 40]), np.array([85, 255, 255]))
-        dark_green = cv2.inRange(hsv, np.array([35, 40, 40]), np.array([75, 255, 150]))
-        light_green = cv2.inRange(hsv, np.array([40, 30, 100]), np.array([85, 255, 255]))
         brown_mask = cv2.inRange(hsv, np.array([10, 50, 50]), np.array([35, 255, 200]))
-        yellow_mask = cv2.inRange(hsv, np.array([20, 80, 100]), np.array([40, 255, 255]))
         dark_mask = cv2.inRange(hsv, np.array([0, 0, 0]), np.array([180, 255, 80]))
         
-        # Calculate ratios
         healthy_ratio = np.sum(healthy_green > 0) / healthy_green.size
-        dark_green_ratio = np.sum(dark_green > 0) / dark_green.size
-        light_green_ratio = np.sum(light_green > 0) / light_green.size
         brown_ratio = np.sum(brown_mask > 0) / brown_mask.size
-        yellow_ratio = np.sum(yellow_mask > 0) / yellow_mask.size
         dark_ratio = np.sum(dark_mask > 0) / dark_mask.size
         
-        # Texture analysis - multiple scales
-        laplacian = cv2.Laplacian(gray, cv2.CV_64F)
-        texture_var = np.var(laplacian)
-        
-        # Edge detection for leaf shape analysis
-        edges = cv2.Canny(gray, 50, 150)
-        edge_density = np.sum(edges > 0) / edges.size
-        
-        # Detect wrinkled/bumpy texture (potato characteristic)
-        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-        detail = cv2.absdiff(gray, blurred)
-        wrinkle_score = np.mean(detail)
-        
-        # Crop identification logic (simplified for length)
         crop = "Unknown"
-        crop_confidence = 80
-        
         is_healthy = healthy_ratio > 0.65 and brown_ratio < 0.1 and dark_ratio < 0.15
         
         if is_healthy:
@@ -705,7 +638,7 @@ def predict(image_bytes: Optional[bytes] = None, language: str = "en") -> dict:
         
         if model is not None and img_array is not None:
             try:
-                # 🚨 THE FIX: LAZY IMPORT 🚨
+                # 🚨 LAZY IMPORT 🚨
                 # TensorFlow will now ONLY load if this exact block of code runs
                 from services.gradcam_plus import generate_heatmap_b64 as generate_gradcam_heatmap
                 
