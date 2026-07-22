@@ -7,6 +7,9 @@ from supabase_client import supabase
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
+# Add the translator import here!
+from deep_translator import GoogleTranslator
+
 router = APIRouter()
 limiter = Limiter(key_func=get_remote_address)
 
@@ -27,7 +30,7 @@ async def analyze_image(
     if not file:
         raise HTTPException(
             status_code=400, 
-            detail="No file uploaded. Please select an image to ."
+            detail="No file uploaded. Please select an image."
         )
     
     # VALIDATION 2: Check if file is empty (no content)
@@ -94,13 +97,34 @@ async def analyze_image(
     # Skip Supabase upload for now (RLS policy issue) - just use local analysis
     image_url = f"local://{file.filename}"
 
-    # Run AI prediction with language parameter
+    # Run AI prediction
     print(f"[] 🤖 Calling AI prediction pipeline with language: {language}")
     result = predict(file_bytes, language=language)
     
     # Add image URL to result
     result["image_url"] = image_url
     
+    # ---------------------------------------------------------
+    # NEW TRANSLATION BLOCK
+    # Intercepts the English AI text and translates it dynamically
+    # ---------------------------------------------------------
+    if language != "en":
+        print(f"[] 🌍 Translating generated insights to {language}...")
+        try:
+            translator = GoogleTranslator(source='en', target=language)
+            
+            if result.get("explanation"):
+                result["explanation"] = translator.translate(result["explanation"])
+            if result.get("treatment"):
+                result["treatment"] = translator.translate(result["treatment"])
+            if result.get("precautions"):
+                result["precautions"] = translator.translate(result["precautions"])
+                
+            print("[] ✅ Translation successful!")
+        except Exception as e:
+            print(f"[] ⚠️ Translation failed, falling back to English: {e}")
+    # ---------------------------------------------------------
+
     print(f"[] ✅ Prediction complete:")
     print(f"  - Crop: {result.get('crop', 'N/A')}")
     print(f"  - Disease: {result.get('disease', 'N/A')}")
@@ -108,23 +132,11 @@ async def analyze_image(
     print(f"  - Confidence: {result.get('confidence', 0)}%")
     print(f"  - Heatmap: {'Generated' if result.get('heatmap_b64') else 'Not generated'}")
 
-    # Skip saving to history table for now (can add later when Supabase is configured)
-    # record = {
-    #     "user_id":     user_id,
-    #     "image_url":   image_url,
-    #     "disease":     result["disease"],
-    #     "severity":    result["severity"],
-    #     "confidence":  result["confidence"],
-    #     "status":      result["status"],
-    #     "heatmap_url": result.get("heatmap_url", ""),
-    # }
-    # supabase.table("history").insert(record).execute()
-
-    # Return comprehensive structured JSON
+    # Return comprehensive structured JSON (Now fully translated!)
     return {
         "crop":        result.get("crop", "Unknown"),
         "disease":     result.get("disease", "Unknown"),
-        "disease_key": result.get("disease_key", ""),  # Key for disease info lookup
+        "disease_key": result.get("disease_key", ""),  
         "severity":    result.get("severity", 0),
         "confidence":  result.get("confidence", 0),
         "status":      result.get("status", "Unknown"),

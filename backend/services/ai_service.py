@@ -3,7 +3,6 @@ import hashlib
 import base64
 import json
 from typing import Optional
-import numpy as np
 import urllib.request
 import urllib.parse
 
@@ -54,67 +53,46 @@ def _load_disease_info():
         print(f"[AI] Failed to load disease info: {e}")
         return {}
 
-def _load_torch_model():
-    """Load the PyTorch MobileNetV2 model"""
+def _load_efficientnet_model():
+    """Load the fine-tuned EfficientNet Keras model for plant disease detection"""
     global _ML_MODEL, _CLASS_NAMES
-    
-    # CRITICAL FIX: CACHING CHECK
     if _ML_MODEL is not None:
         return _ML_MODEL, _CLASS_NAMES
     
     try:
-        import torch
-        from torchvision import models
-        import torch.nn as nn
+        import tensorflow as tf
         
-        model_path = "mobilenetv2_plant.pth"
+        model_path = "best_farmlens_finetuned.keras"
+        class_path = "class_names.json"
         
         if not os.path.exists(model_path):
-            print(f"[AI] PyTorch model file not found at {model_path}")
+            print(f"[AI] Fine-tuned model not found at {model_path}")
             return None, None
         
-        # Hardcode the standard 38 classes to align perfectly with the model weights
-        _CLASS_NAMES = [
-            'Apple___Apple_scab', 'Apple___Black_rot', 'Apple___Cedar_apple_rust', 'Apple___healthy',
-            'Blueberry___healthy', 'Cherry_(including_sour)___Powdery_mildew', 'Cherry_(including_sour)___healthy',
-            'Corn_(maize)___Cercospora_leaf_spot Gray_leaf_spot', 'Corn_(maize)___Common_rust_', 'Corn_(maize)___Northern_Leaf_Blight', 'Corn_(maize)___healthy',
-            'Grape___Black_rot', 'Grape___Esca_(Black_Measles)', 'Grape___Leaf_blight_(Isariopsis_Leaf_Spot)', 'Grape___healthy',
-            'Orange___Haunglongbing_(Citrus_greening)', 'Peach___Bacterial_spot', 'Peach___healthy',
-            'Pepper,_bell___Bacterial_spot', 'Pepper,_bell___healthy', 'Potato___Early_blight', 'Potato___Late_blight', 'Potato___healthy',
-            'Raspberry___healthy', 'Soybean___healthy', 'Squash___Powdery_mildew', 'Strawberry___Leaf_scorch', 'Strawberry___healthy',
-            'Tomato___Bacterial_spot', 'Tomato___Early_blight', 'Tomato___Late_blight', 'Tomato___Leaf_Mold',
-            'Tomato___Septoria_leaf_spot', 'Tomato___Spider_mites Two-spotted_spider_mite', 'Tomato___Target_Spot',
-            'Tomato___Tomato_Yellow_Leaf_Curl_Virus', 'Tomato___Tomato_mosaic_virus', 'Tomato___healthy'
-        ]
+        # Load class names (66 Classes)
+        with open(class_path, 'r') as f:
+            _CLASS_NAMES = json.load(f)
         
-        # Build model architecture 
-        model = models.mobilenet_v2(weights=None)
-        model.classifier[1] = nn.Sequential(
-            nn.Dropout(0.2),
-            nn.Linear(model.classifier[1].in_features, 38)
-        )
-        
-        # Load trained weights
-        model.load_state_dict(torch.load(model_path, map_location=torch.device('cpu'), weights_only=True))
-        model.eval()
+        # Load the trained Keras model
+        model = tf.keras.models.load_model(model_path)
         
         _ML_MODEL = model
-        print(f"[AI] PyTorch MobileNetV2 model loaded successfully with 38 classes")
+        print(f"[AI] EfficientNet model loaded successfully with {len(_CLASS_NAMES)} classes")
         return _ML_MODEL, _CLASS_NAMES
     except Exception as e:
-        print(f"[AI] Failed to load PyTorch model: {e}")
+        print(f"[AI] Failed to load EfficientNet model: {e}")
         import traceback
         traceback.print_exc()
         return None, None
 
-def _torch_predict(image_bytes: bytes) -> dict:
-    """Use custom PyTorch MobileNetV2 model for prediction"""
+def _run_ml_predict(image_bytes: bytes) -> dict:
+    """Use custom EfficientNet model for prediction"""
     try:
         from PIL import Image
         import io
         import numpy as np
         
-        model, class_names = _load_torch_model()
+        model, class_names = _load_efficientnet_model()
         disease_info = _load_disease_info()
         
         if model is None or class_names is None:
@@ -125,38 +103,43 @@ def _torch_predict(image_bytes: bytes) -> dict:
         
         img = Image.open(io.BytesIO(image_bytes)).convert('RGB')
         
-        import torch
-        from torchvision import transforms
+        import tensorflow as tf
+        img_resized = img.resize((224, 224))
+        img_array = np.array(img_resized, dtype=np.float32)
+        img_array = np.expand_dims(img_array, axis=0)
         
-        transform = transforms.Compose([
-            transforms.Resize((224, 224)),
-            transforms.ToTensor(),
-            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-        ])
+        from tensorflow.keras.applications.efficientnet import preprocess_input
+        img_array = preprocess_input(img_array)
         
-        x = transform(img).unsqueeze(0)
+        preds = model.predict(img_array, verbose=0)
+        probs = preds[0]
+        predicted_idx = int(np.argmax(probs))
+        confidence = float(probs[predicted_idx])
         
-        with torch.no_grad():
-            preds = model(x)
-            probs = torch.softmax(preds, dim=1)[0]
-            top5_probs, top5_indices = torch.topk(probs, min(5, len(probs)))
-            
-            confidence = float(top5_probs[0])
-            predicted_idx = top5_indices[0].item()
-            
-            print(f"[AI] Top 5 PyTorch predictions:")
-            for i in range(min(5, len(top5_indices))):
-                idx = top5_indices[i].item()
-                prob = float(top5_probs[i])
-                print(f"  {i+1}. {class_names[idx]} ({prob*100:.1f}%)")
+        top5_indices = np.argsort(probs)[-5:][::-1]
+        print(f"[AI Pipeline] === TOP 5 PREDICTIONS ===")
+        for rank, idx in enumerate(top5_indices, 1):
+            print(f"  #{rank} [{idx:2d}] {class_names[idx]:40s} = {probs[idx]*100:.2f}%")
         
         label = class_names[predicted_idx]
         print(f"[AI] Selected prediction: {label} ({confidence*100:.1f}%)")
         
+        # Parse the custom labels
         if '___' in label:
             parts = label.split('___')
             crop = parts[0].replace('_', ' ').replace('(', '').replace(')', '').strip()
             disease_raw = parts[1].replace('_', ' ').strip() if len(parts) > 1 else "Unknown"
+        elif '_' in label:
+            found = False
+            for crop_name in ['Cotton', 'Tomato', 'Potato', 'Rice', 'Wheat', 'Corn', 'Apple', 'Grape', 'Orange', 'Peach', 'Pepper', 'Raspberry', 'Blueberry', 'Strawberry', 'Squash', 'Soybean', 'Cherry']:
+                if label.startswith(crop_name):
+                    crop = crop_name
+                    disease_raw = label[len(crop_name)+1:].replace('_', ' ')
+                    found = True
+                    break
+            if not found:
+                crop = "Unknown"
+                disease_raw = label.replace('_', ' ')
         else:
             crop = "General"
             disease_raw = label.replace('_', ' ')
@@ -168,6 +151,7 @@ def _torch_predict(image_bytes: bytes) -> dict:
         symptoms = []
         prevention = []
         
+        # Fetch detailed info from the JSON knowledge base
         if label in disease_info:
             info = disease_info[label]
             crop = info.get('crop', crop)
@@ -217,7 +201,7 @@ def _torch_predict(image_bytes: bytes) -> dict:
             else:
                 severity = max(70, min(95, int(confidence * 95)))
         
-        explanation = f"Detected {disease} in {crop} with {confidence_pct}% confidence using PyTorch MobileNetV2 deep learning model."
+        explanation = f"Detected {disease} in {crop} with {confidence_pct}% confidence using Fine-tuned EfficientNet deep learning model."
         if symptoms:
             explanation += f" Symptoms: {', '.join(symptoms[:3])}."
         
@@ -229,6 +213,9 @@ def _torch_predict(image_bytes: bytes) -> dict:
             "status": "Healthy" if is_healthy else "Infected",
             "explanation": explanation,
             "treatment": treatment,
+            "_gradcam_model": model,           # Passed for Heatmap generation
+            "_gradcam_img_array": img_array,   # Passed for Heatmap generation
+            "_gradcam_class_idx": predicted_idx # Passed for Heatmap generation
         }
         
         return result
@@ -261,13 +248,16 @@ def predict(image_bytes: Optional[bytes] = None, language: str = "en") -> dict:
 
     result = None
     
+    # 1. Force custom Keras ML model locally
     try:
-        print("[AI Pipeline] ✓ Step 1: Using PyTorch MobileNetV2 model (primary method)...")
-        result = _torch_predict(image_bytes)
+        print("[AI Pipeline] ✓ Step 1: Using Fine-tuned EfficientNet model...")
+        result = _run_ml_predict(image_bytes)
         print(f"[AI Pipeline] ✅ ML Model success: {result['crop']} / {result['disease']} ({result['confidence']}% confidence)")
     except Exception as e:
         print(f"[AI Pipeline] ❌ ML Model failed: {e}")
-    
+        import traceback
+        traceback.print_exc()
+        
     if not result:
         print("[AI Pipeline] ⚠️ All methods failed, using mock prediction")
         result = {
@@ -280,6 +270,7 @@ def predict(image_bytes: Optional[bytes] = None, language: str = "en") -> dict:
             "treatment": "Please try again."
         }
 
+    # Extract precautions from disease info
     disease_info = _load_disease_info()
     precautions = []
     disease_key = "" 
@@ -297,6 +288,36 @@ def predict(image_bytes: Optional[bytes] = None, language: str = "en") -> dict:
         else:
             precautions = ["Isolate infected plants to prevent disease spread"]
     
+    # Generate Grad-CAM++ heatmap for infected plants
+    heatmap_b64 = ""
+    if result["status"] == "Infected" and result["severity"] > 0:
+        model = result.get("_gradcam_model")
+        img_array = result.get("_gradcam_img_array")
+        class_idx = result.get("_gradcam_class_idx", 0)
+        
+        if model is not None and img_array is not None:
+            try:
+                from services.gradcam_plus import generate_heatmap_b64 as generate_gradcam_heatmap
+                
+                heatmap_b64 = generate_gradcam_heatmap(
+                    image_bytes, 
+                    result["severity"],
+                    result.get("crop", "Unknown"),
+                    result.get("disease", "Unknown"),
+                    result.get("confidence", 0),
+                    model=model,
+                    img_array=img_array,
+                    class_idx=class_idx
+                )
+            except Exception as e:
+                print(f"[AI Pipeline] ❌ Heatmap EXCEPTION: {e}")
+                heatmap_b64 = ""
+    
+    # Clean up metadata before sending to frontend
+    result.pop("_gradcam_model", None)
+    result.pop("_gradcam_img_array", None)
+    result.pop("_gradcam_class_idx", None)
+
     response = {
         "crop": result.get("crop", "Unknown"),
         "disease": result.get("disease", "Unknown"),
@@ -306,14 +327,11 @@ def predict(image_bytes: Optional[bytes] = None, language: str = "en") -> dict:
         "status": result.get("status", "Unknown"),
         "image_url": "", 
         "heatmap_url": "", 
-        "heatmap_b64": "",  # Disabled for PyTorch compatibility 
+        "heatmap_b64": heatmap_b64,
         "explanation": result.get("explanation", "Analysis completed."),
         "treatment": result.get("treatment", ""),
-        "precautions": precautions
+        "precautions": precautions if isinstance(precautions, str) else " ".join(precautions)
     }
-
-    if isinstance(response["precautions"], list):
-        response["precautions"] = " ".join(response["precautions"])
 
     print(f"[AI Pipeline] ✅ Prediction complete! Returning structured JSON response")
     return response

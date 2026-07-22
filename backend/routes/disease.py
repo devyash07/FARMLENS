@@ -55,52 +55,67 @@ def _load_disease_info():
 
 
 @router.get("/disease/{disease_key}")
-def get_disease_info(disease_key: str, language: str = "en"):
+def get_disease_info(disease_key: str, language: str = "en", crop: str = ""):
     """
-    Get detailed information for a specific disease
+    Get detailed information for a specific disease, and always return translated UI labels.
     """
     disease_db = _load_disease_info()
-    if not disease_db:
-        raise HTTPException(status_code=503, detail="Disease database not loaded")
+    
+    # ❌ WE REMOVED THE 503 ERROR CRASH HERE!
+    # Now, even if disease_db is empty, the API continues to the translation block below.
         
+    # 1. ALWAYS generate and translate UI labels, regardless of if the disease is found
+    subtitle_text = f"Comprehensive analysis and management guidelines for {disease_key} in {crop}" if crop else f"Comprehensive analysis and management guidelines for {disease_key}"
+    
+    ui_labels = {
+        "title": "Detailed Disease Insights",
+        "subtitle": subtitle_text,
+        "description_label": "Description",
+        "symptoms_label": "Key Symptoms",
+        "causes_label": "Causes & Pathogen",
+        "not_found_msg": "Additional detailed database info currently unavailable for this specific classification."
+    }
+    
+    if language != "en":
+        print(f"[Disease API] Translating UI Labels to {language}...")
+        for k, v in ui_labels.items():
+            ui_labels[k] = translate_content(v, language)
+
     def prepare_response(key, data_obj):
-        # Deep copy to avoid translating the master database in-memory
         data = data_obj.copy() 
         if language != "en":
-            print(f"[Disease API] Translating database entry to {language}...")
             data["symptoms"] = translate_content(data.get("symptoms", []), language)
             data["prevention"] = translate_content(data.get("prevention", []), language)
             data["treatment"] = translate_content(data.get("treatment", []), language)
+            if "description" in data:
+                data["description"] = translate_content(data["description"], language)
+            if "causes" in data:
+                data["causes"] = translate_content(data["causes"], language)
         return data
 
-    # Try exact match first
-    if disease_key in disease_db:
-        return {
-            "key": disease_key,
-            "found": True,
-            "data": prepare_response(disease_key, disease_db[disease_key])
-        }
-        
-    # Try case-insensitive match
-    for key in disease_db.keys():
-        if key.lower() == disease_key.lower():
-            return {
-                "key": key,
-                "found": True,
-                "data": prepare_response(key, disease_db[key])
-            }
+    # Proceed safely only if the database loaded properly
+    if disease_db:
+        # 2. Try exact match
+        if disease_key in disease_db:
+            return {"key": disease_key, "found": True, "ui_labels": ui_labels, "data": prepare_response(disease_key, disease_db[disease_key])}
             
-    # Try partial match (for variations)
-    matching_keys = [k for k in disease_db.keys() if disease_key.lower() in k.lower()]
-    if matching_keys:
-        return {
-            "key": disease_key,
-            "found": True,
-            "matches": matching_keys[:5], 
-            "data": prepare_response(matching_keys[0], disease_db[matching_keys[0]]) 
-        }
+        # 3. Try case-insensitive match
+        for key in disease_db.keys():
+            if key.lower() == disease_key.lower():
+                return {"key": key, "found": True, "ui_labels": ui_labels, "data": prepare_response(key, disease_db[key])}
+                
+        # 4. Try partial match
+        matching_keys = [k for k in disease_db.keys() if disease_key.lower() in k.lower()]
+        if matching_keys:
+            return {"key": disease_key, "found": True, "ui_labels": ui_labels, "matches": matching_keys[:5], "data": prepare_response(matching_keys[0], disease_db[matching_keys[0]])}
         
-    raise HTTPException(status_code=404, detail=f"Disease '{disease_key}' not found in database")
+    # 5. NO MATCH FOUND (OR DATABASE EMPTY): Gracefully return the translated UI labels!
+    return {
+        "key": disease_key,
+        "found": False,
+        "ui_labels": ui_labels,
+        "data": None
+    }
 
 
 @router.get("/disease")

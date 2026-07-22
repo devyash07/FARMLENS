@@ -106,9 +106,9 @@ async def timeout_middleware(request: Request, call_next):
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins if ENVIRONMENT == "production" else ["*"],
+    allow_origins=["*"], # Forced wildcard to ensure Ngrok and Vercel communicate perfectly
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 
@@ -147,14 +147,6 @@ def health_check():
     - pytorch_available: GPU availability status
     - backup_apis: External API configuration status
     - supabase_configured: Database connection status
-    
-    Usage with UptimeRobot:
-    1. Go to https://uptimerobot.com
-    2. Create "HTTP(s)" monitor
-    3. URL: https://your-api-domain.com/health
-    4. Keyword: "healthy" (checks if response contains this word)
-    5. Interval: 5 minutes
-    6. Alerts: Email/SMS/Slack
     """
     import torch
     
