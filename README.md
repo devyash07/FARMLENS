@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![FarmLens Logo](public/English-hero.png)
+![FarmLens Logo](public/englsih-hero.png)
 
 **Empowering farmers with AI-driven crop disease detection and treatment recommendations**
 
